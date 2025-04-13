@@ -1,0 +1,28 @@
+{
+  "tasks": {
+    "start": "deno run --allow-net --allow-env --allow-read index.ts",
+    "dev": "deno run --watch --allow-net --allow-env --allow-read index.ts",
+    "deploy": "supabase functions deploy sync-productboard-hierarchy --no-verify-jwt"
+  },
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.window", "deno.ns", "dom"],
+    "strict": true,
+    "checkJs": false,
+    "noImplicitAny": false,
+    "types": ["deno"],
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "importMap": "./import_map.json",
+  "lint": {
+    "include": ["*.ts"]
+  },
+  "fmt": {
+    "include": ["*.ts"],
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "semiColons": true,
+    "singleQuote": false
+  }
+}

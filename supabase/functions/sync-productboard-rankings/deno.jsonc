@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.window"],
+    "strict": true
+  },
+  "imports": {
+    "https://deno.land/std@0.177.0/http/server.ts": "https://deno.land/std@0.177.0/http/server.ts",
+    "npm:@supabase/supabase-js@2.39.7": "https://esm.sh/@supabase/supabase-js@2.39.7",
+    "npm:puppeteer-core@21.5.2": "https://esm.sh/puppeteer-core@21.5.2"
+  }
+}

@@ -1,0 +1,870 @@
+import { createClient } from "npm:@supabase/supabase-js@2.39.7";
+import { z } from "npm:zod@3.22.4";
+import axios from "npm:axios@1.6.7";
+
+// Complete CORS headers for development
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, X-Requested-With, Accept',
+  'Access-Control-Max-Age': '86400', // 24 hours cache for preflight requests
+};
+
+// Define request schema
+const RequestSchema = z.object({
+  workspace_id: z.string().uuid(),
+  api_key: z.string().min(1),
+  product_id: z.string().optional(), // Optional: limit to specific product
+  initiative_id: z.string().optional(), // Optional: limit to specific initiative
+  include_features: z.boolean().default(true),
+  include_components: z.boolean().default(true),
+  include_initiatives: z.boolean().default(true),
+  max_depth: z.number().min(1).max(10).default(5), // Maximum recursion depth for feature hierarchy
+});
+
+// Type definitions for relationships
+interface EntityMap<T> {
+  [id: string]: T;
+}
+
+interface RelationshipMap {
+  [sourceId: string]: string[];
+}
+
+// Entity interface for easier tracking and relationship building
+interface EntityReference {
+  id: string;
+  productboard_id: string;
+  type: 'product' | 'initiative' | 'feature' | 'component';
+}
+
+// Comprehensive result tracking
+interface SyncResults {
+  products: number;
+  components: number;
+  features: number;
+  subFeatures: number;
+  initiatives: number;
+  initiativeFeatures: number;
+  componentFeatures: number;
+  errors: string[];
+}
+
+// Helper function to make internal API calls
+async function callInternalApi(
+  apiName: string,
+  params: Record<string, any>,
+  logErrors = true
+): Promise<any> {
+  const baseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const apiKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  
+  if (logErrors) {
+    console.log(`Calling internal API: ${apiName} with params:`, JSON.stringify(params));
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/functions/v1/${apiName}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Error calling ${apiName}: ${response.status} ${errorText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    if (logErrors) {
+      console.error(`Error calling internal API ${apiName}:`, error);
+    }
+    throw error;
+  }
+}
+
+// Resilient API call wrapper
+async function resilientApiCall<T>(
+  callFunction: () => Promise<T>,
+  entityType: string,
+  entityId: string
+): Promise<T | null> {
+  try {
+    return await callFunction();
+  } catch (error) {
+    if (error.message && error.message.includes('404')) {
+      console.log(`${entityType} with ID ${entityId} not found, continuing...`);
+      return null;
+    }
+    // For other errors, log but don't fail the entire operation
+    console.error(`Error fetching ${entityType} ${entityId}:`, error);
+    return null;
+  }
+}
+
+// Function to fetch products from ProductBoard
+async function fetchAllProducts(api_key: string, product_id?: string): Promise<any[]> {
+  try {
+    if (product_id) {
+      // If specific product ID provided, just get that one
+      const response = await callInternalApi("get-productboard-products", {
+        api_key,
+        product_id,
+      });
+
+      if (!response.success) {
+        throw new Error(`Failed to fetch product: ${response.error}`);
+      }
+
+      return [response.data];
+    } else {
+      // Get all products
+      const response = await callInternalApi("get-productboard-products", {
+        api_key,
+      });
+
+      if (!response.success) {
+        throw new Error(`Failed to fetch products: ${response.error}`);
+      }
+
+      return response.data.data || [];
+    }
+  } catch (error) {
+    console.error("Error fetching products:", error);
+    throw error;
+  }
+}
+
+// Function to fetch all components (without filtering by product)
+async function fetchAllComponents(api_key: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-components", {
+      api_key,
+    }, false); // Don't log errors here as 404 is expected in some configurations
+
+    if (!response.success) {
+      // If we get a 404, return empty array rather than failing
+      if (response.error && response.error.includes('404')) {
+        console.log('No components found in ProductBoard, continuing...');
+        return [];
+      }
+      throw new Error(`Failed to fetch components: ${response.error}`);
+    }
+
+    return response.data.data || [];
+  } catch (error) {
+    // Check if this is a 404 error, which is expected in some ProductBoard configurations
+    if (error.message && error.message.includes('404')) {
+      console.log('No components found in ProductBoard, continuing...');
+      return [];
+    }
+    console.error("Error fetching components:", error);
+    return []; // Return empty array to continue the sync
+  }
+}
+
+// Function to fetch all initiatives (no filtering)
+async function fetchAllInitiatives(api_key: string, initiative_id?: string): Promise<any[]> {
+  try {
+    if (initiative_id) {
+      // If specific initiative ID provided, just get that one
+      const response = await callInternalApi("get-productboard-initiatives", {
+        api_key,
+        initiative_id,
+      });
+
+      if (!response.success) {
+        throw new Error(`Failed to fetch initiative: ${response.error}`);
+      }
+
+      return [response.data];
+    } else {
+      // Get all initiatives
+      const response = await callInternalApi("get-productboard-initiatives", {
+        api_key,
+      });
+
+      if (!response.success) {
+        throw new Error(`Failed to fetch initiatives: ${response.error}`);
+      }
+
+      return response.data.data || [];
+    }
+  } catch (error) {
+    console.error("Error fetching initiatives:", error);
+    throw error;
+  }
+}
+
+// Function to fetch all features directly
+async function fetchAllFeatures(api_key: string): Promise<any[]> {
+  // Note: ProductBoard API may not support getting all features at once
+  // We'll need to fetch features by their relationships and aggregate them
+  // This is left as placeholder and will be implemented as part of the relationship building
+  return [];
+}
+
+// Function to fetch features for specific component
+async function fetchComponentFeatures(api_key: string, component_id: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-features", {
+      api_key,
+      component_id,
+    }, false); // Don't log errors here as we expect some 404s
+
+    if (!response.success) {
+      // If we get a 404, return empty array rather than failing
+      if (response.error && response.error.includes('404')) {
+        console.log(`No features found for component ${component_id}, continuing...`);
+        return [];
+      }
+      throw new Error(`Failed to fetch component features: ${response.error}`);
+    }
+
+    return response.data.data || [];
+  } catch (error) {
+    if (error.message && error.message.includes('404')) {
+      console.log(`No features found for component ${component_id}, continuing...`);
+      return [];
+    }
+    console.error(`Error fetching features for component ${component_id}:`, error);
+    return []; // Return empty array to continue the sync
+  }
+}
+
+// Function to fetch features linked to an initiative
+async function fetchInitiativeFeatures(api_key: string, initiative_id: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-initiative-features", {
+      api_key,
+      initiative_id,
+    }, false); // Don't log errors here as we expect some 404s
+
+    if (!response.success) {
+      // If we get a 404, return empty array rather than failing
+      if (response.error && response.error.includes('404')) {
+        console.log(`No features found for initiative ${initiative_id}, continuing...`);
+        return [];
+      }
+      throw new Error(`Failed to fetch initiative features: ${response.error}`);
+    }
+
+    return response.data.data?.features || [];
+  } catch (error) {
+    if (error.message && error.message.includes('404')) {
+      console.log(`No features found for initiative ${initiative_id}, continuing...`);
+      return [];
+    }
+    console.error(`Error fetching features for initiative ${initiative_id}:`, error);
+    return []; // Return empty array to continue the sync
+  }
+}
+
+// Function to fetch sub-features for a parent feature
+async function fetchSubFeatures(api_key: string, parent_id: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-features", {
+      api_key,
+      parent_id,
+    }, false); // Don't log errors for not found
+
+    if (!response.success) {
+      // If we get a 404, return empty array rather than failing
+      if (response.error && response.error.includes('404')) {
+        console.log(`No sub-features found for parent ${parent_id}, continuing...`);
+        return [];
+      }
+      throw new Error(`Failed to fetch sub-features: ${response.error}`);
+    }
+
+    return response.data.data || [];
+  } catch (error) {
+    if (error.message && error.message.includes('404')) {
+      console.log(`No sub-features found for parent ${parent_id}, continuing...`);
+      return [];
+    }
+    console.error(`Error fetching sub-features for parent ${parent_id}:`, error);
+    return []; // Return empty array to continue the sync
+  }
+}
+
+// Helper function to add a relationship to a map
+function addToRelationshipMap(map: RelationshipMap, sourceId: string, targetId: string): void {
+  if (!map[sourceId]) {
+    map[sourceId] = [];
+  }
+  if (!map[sourceId].includes(targetId)) {
+    map[sourceId].push(targetId);
+  }
+}
+
+// Helper to create a feature hierarchy map for tracking parent-child relationships
+function createFeatureHierarchyMap(features: any[]): EntityMap<any> {
+  const featureMap: EntityMap<any> = {};
+  
+  // First, add all features to the map
+  for (const feature of features) {
+    featureMap[feature.id] = { ...feature, subFeatures: [] };
+  }
+  
+  // Then, establish the parent-child relationships
+  for (const feature of features) {
+    if (feature.parent_id && featureMap[feature.parent_id]) {
+      featureMap[feature.parent_id].subFeatures.push(feature.id);
+    }
+  }
+  
+  return featureMap;
+}
+
+// Main data collection function - collect all entities
+async function collectAllEntities(
+  api_key: string,
+  product_id?: string,
+  initiative_id?: string,
+  include_features = true,
+  include_components = true,
+  include_initiatives = true
+): Promise<{
+  products: any[];
+  initiatives: any[];
+  components: any[];
+  features: any[];
+  results: SyncResults;
+}> {
+  const results: SyncResults = {
+    products: 0,
+    components: 0,
+    features: 0,
+    subFeatures: 0,
+    initiatives: 0,
+    initiativeFeatures: 0,
+    componentFeatures: 0,
+    errors: [],
+  };
+
+  // 1. Fetch all products (or specific product if ID provided)
+  console.log("Fetching products...");
+  const products = await fetchAllProducts(api_key, product_id);
+  results.products = products.length;
+  console.log(`Fetched ${products.length} products`);
+  
+  // 2. Initialize empty arrays for other entity types
+  let initiatives: any[] = [];
+  let components: any[] = [];
+  let features: any[] = [];
+
+  // 3. Fetch initiatives if included (direct fetch, not through products)
+  if (include_initiatives) {
+    console.log("Fetching initiatives...");
+    initiatives = await fetchAllInitiatives(api_key, initiative_id);
+    results.initiatives = initiatives.length;
+    console.log(`Fetched ${initiatives.length} initiatives`);
+  }
+
+  // 4. Fetch components if included (direct fetch, not through products)
+  if (include_components) {
+    console.log("Fetching components...");
+    components = await fetchAllComponents(api_key);
+    results.components = components.length;
+    console.log(`Fetched ${components.length} components`);
+  }
+
+  // 5. Collect features from multiple sources if included
+  if (include_features) {
+    console.log("Collecting features from multiple sources...");
+    const allFeaturesMap: Record<string, any> = {};
+    
+    // 5a. Collect features from initiatives
+    if (include_initiatives) {
+      for (const initiative of initiatives) {
+        console.log(`Fetching features for initiative ${initiative.id}...`);
+        const initiativeFeatures = await fetchInitiativeFeatures(api_key, initiative.id);
+        results.initiativeFeatures += initiativeFeatures.length;
+        
+        // Add to our collection if we don't have them yet
+        for (const feature of initiativeFeatures) {
+          if (!allFeaturesMap[feature.id]) {
+            allFeaturesMap[feature.id] = { 
+              ...feature, 
+              initiative_ids: [initiative.id],
+            };
+          } else {
+            // Update existing feature to include this initiative
+            if (!allFeaturesMap[feature.id].initiative_ids) {
+              allFeaturesMap[feature.id].initiative_ids = [];
+            }
+            allFeaturesMap[feature.id].initiative_ids.push(initiative.id);
+          }
+        }
+      }
+      console.log(`Collected ${results.initiativeFeatures} features from initiatives`);
+    }
+    
+    // 5b. Collect features from components
+    if (include_components) {
+      for (const component of components) {
+        console.log(`Fetching features for component ${component.id}...`);
+        const componentFeatures = await fetchComponentFeatures(api_key, component.id);
+        results.componentFeatures += componentFeatures.length;
+        
+        // Add to our collection if we don't have them yet
+        for (const feature of componentFeatures) {
+          if (!allFeaturesMap[feature.id]) {
+            allFeaturesMap[feature.id] = { 
+              ...feature, 
+              component_id: component.id,
+            };
+          } else {
+            // Update existing feature with component info
+            allFeaturesMap[feature.id].component_id = component.id;
+          }
+        }
+      }
+      console.log(`Collected ${results.componentFeatures} features from components`);
+    }
+    
+    // 5c. Get sub-features for all features we've collected
+    console.log("Collecting sub-features...");
+    const featureIds = Object.keys(allFeaturesMap);
+    for (const featureId of featureIds) {
+      const subFeatures = await fetchSubFeatures(api_key, featureId);
+      results.subFeatures += subFeatures.length;
+      
+      // Add to our collection if we don't have them yet
+      for (const subFeature of subFeatures) {
+        if (!allFeaturesMap[subFeature.id]) {
+          allFeaturesMap[subFeature.id] = { 
+            ...subFeature, 
+            parent_id: featureId,
+          };
+        } else {
+          // Update existing feature with parent info
+          allFeaturesMap[subFeature.id].parent_id = featureId;
+        }
+      }
+    }
+    console.log(`Collected ${results.subFeatures} sub-features`);
+    
+    // Convert the map to an array for processing
+    features = Object.values(allFeaturesMap);
+    results.features = features.length;
+    console.log(`Total unique features collected: ${features.length}`);
+  }
+
+  return {
+    products,
+    initiatives,
+    components,
+    features,
+    results,
+  };
+}
+
+// Function to build all relationships between entities
+function buildRelationships(
+  products: any[],
+  initiatives: any[],
+  components: any[],
+  features: any[]
+): {
+  productFeatures: RelationshipMap;
+  productComponents: RelationshipMap;
+  initiativeFeatures: RelationshipMap;
+  initiativeComponents: RelationshipMap;
+  featureComponents: RelationshipMap;
+  componentFeatures: RelationshipMap;
+  featureSubFeatures: RelationshipMap;
+  featureParents: RelationshipMap;
+} {
+  console.log("Building relationships between all entities...");
+  
+  // Initialize relationship maps
+  const productFeatures: RelationshipMap = {};
+  const productComponents: RelationshipMap = {};
+  const initiativeFeatures: RelationshipMap = {};
+  const initiativeComponents: RelationshipMap = {};
+  const featureComponents: RelationshipMap = {};
+  const componentFeatures: RelationshipMap = {};
+  const featureSubFeatures: RelationshipMap = {};
+  const featureParents: RelationshipMap = {};
+  
+  // 1. Build direct relationships from features
+  for (const feature of features) {
+    // Feature to product relationship
+    if (feature.product?.id) {
+      addToRelationshipMap(productFeatures, feature.product.id, feature.id);
+    }
+    
+    // Feature to initiative relationships
+    if (feature.initiative_ids) {
+      for (const initiativeId of feature.initiative_ids) {
+        addToRelationshipMap(initiativeFeatures, initiativeId, feature.id);
+      }
+    }
+    
+    // Feature to component relationship
+    if (feature.component_id) {
+      addToRelationshipMap(featureComponents, feature.id, feature.component_id);
+      addToRelationshipMap(componentFeatures, feature.component_id, feature.id);
+    }
+    
+    // Feature parent-child relationships
+    if (feature.parent_id) {
+      addToRelationshipMap(featureSubFeatures, feature.parent_id, feature.id);
+      addToRelationshipMap(featureParents, feature.id, feature.parent_id);
+    }
+  }
+  
+  // 2. Build component to product relationships (through features)
+  for (const productId in productFeatures) {
+    for (const featureId of productFeatures[productId]) {
+      const feature = features.find(f => f.id === featureId);
+      if (feature && feature.component_id) {
+        addToRelationshipMap(productComponents, productId, feature.component_id);
+      }
+    }
+  }
+  
+  // 3. Build initiative to component relationships (through features)
+  for (const initiativeId in initiativeFeatures) {
+    for (const featureId of initiativeFeatures[initiativeId]) {
+      const feature = features.find(f => f.id === featureId);
+      if (feature && feature.component_id) {
+        addToRelationshipMap(initiativeComponents, initiativeId, feature.component_id);
+      }
+    }
+  }
+
+  console.log("Finished building all relationships");
+  
+  return {
+    productFeatures,
+    productComponents,
+    initiativeFeatures,
+    initiativeComponents,
+    featureComponents,
+    componentFeatures,
+    featureSubFeatures,
+    featureParents,
+  };
+}
+
+// Helper function to clean object for metadata storage
+function cleanMetadata(obj: any): Record<string, any> {
+  // Create a copy of the object
+  const metadata = { ...obj };
+  
+  // Remove fields that are already stored in dedicated columns
+  const fieldsToRemove = [
+    'id', 'name', 'description', 'status', 'targetStart', 'targetEnd',
+    'owner', 'product_id', 'component_id', 'parent_id', 'product', 'components',
+    'initiative_ids', 'subFeatures'
+  ];
+  
+  for (const field of fieldsToRemove) {
+    delete metadata[field];
+  }
+  
+  return metadata;
+}
+
+// Store all collected data in the database
+async function storeData(
+  supabase: any,
+  workspace_id: string,
+  products: any[],
+  initiatives: any[],
+  components: any[],
+  features: any[],
+  relationships: ReturnType<typeof buildRelationships>
+): Promise<{
+  idMaps: {
+    products: Record<string, string>;
+    initiatives: Record<string, string>;
+    components: Record<string, string>;
+    features: Record<string, string>;
+  };
+}> {
+  console.log("Storing all data in the database...");
+  
+  // Maps to store ProductBoard ID to database ID mappings
+  const idMaps = {
+    products: {} as Record<string, string>,
+    initiatives: {} as Record<string, string>,
+    components: {} as Record<string, string>,
+    features: {} as Record<string, string>,
+  };
+
+  // 1. Store products
+  console.log("Storing products...");
+  for (const product of products) {
+    try {
+      const { data: insertedProduct, error } = await supabase
+        .from("productboard_products_extended")
+        .upsert({
+          productboard_id: product.id,
+          name: product.name,
+          description: product.description || null,
+          status: product.status || null,
+          metadata: cleanMetadata(product),
+          workspace_id,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(`Error storing product ${product.id}:`, error);
+      } else if (insertedProduct) {
+        idMaps.products[product.id] = insertedProduct.id;
+      }
+    } catch (error) {
+      console.error(`Error storing product ${product.id}:`, error);
+    }
+  }
+  console.log(`Stored ${Object.keys(idMaps.products).length} products`);
+
+  // 2. Store initiatives
+  console.log("Storing initiatives...");
+  for (const initiative of initiatives) {
+    try {
+      // Try to determine the product_id from initiative data
+      const productId = initiative.product?.id || initiative.productId || null;
+      
+      const { data: insertedInitiative, error } = await supabase
+        .from("productboard_initiatives_extended")
+        .upsert({
+          productboard_id: initiative.id,
+          name: initiative.name,
+          description: initiative.description || null,
+          status: initiative.status || null,
+          timeframe: initiative.timeframe || null,
+          owner: initiative.owner || null,
+          metadata: cleanMetadata(initiative),
+          workspace_id,
+          product_id: productId ? idMaps.products[productId] : null,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(`Error storing initiative ${initiative.id}:`, error);
+      } else if (insertedInitiative) {
+        idMaps.initiatives[initiative.id] = insertedInitiative.id;
+      }
+    } catch (error) {
+      console.error(`Error storing initiative ${initiative.id}:`, error);
+    }
+  }
+  console.log(`Stored ${Object.keys(idMaps.initiatives).length} initiatives`);
+
+  // 3. Store components
+  console.log("Storing components...");
+  for (const component of components) {
+    try {
+      const { data: insertedComponent, error } = await supabase
+        .from("productboard_components_extended")
+        .upsert({
+          productboard_id: component.id,
+          name: component.name,
+          description: component.description || null,
+          status: component.status || null,
+          metadata: cleanMetadata(component),
+          workspace_id,
+          // We don't have product_id at this point, will update later based on relationships
+          product_id: null,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(`Error storing component ${component.id}:`, error);
+      } else if (insertedComponent) {
+        idMaps.components[component.id] = insertedComponent.id;
+      }
+    } catch (error) {
+      console.error(`Error storing component ${component.id}:`, error);
+    }
+  }
+  console.log(`Stored ${Object.keys(idMaps.components).length} components`);
+
+  // 4. Store features (first pass - without parent relationships)
+  console.log("Storing features (first pass)...");
+  for (const feature of features) {
+    try {
+      const componentId = feature.component_id ? idMaps.components[feature.component_id] : null;
+      
+      const { data: insertedFeature, error } = await supabase
+        .from("productboard_features_extended")
+        .upsert({
+          productboard_id: feature.id,
+          name: feature.name,
+          description: feature.description || null,
+          status: feature.status || null,
+          target_start_date: feature.targetStart || null,
+          target_end_date: feature.targetEnd || null,
+          owner: feature.owner || null,
+          metadata: cleanMetadata(feature),
+          workspace_id,
+          component_id: componentId,
+          parent_id: null, // Will be updated in second pass
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(`Error storing feature ${feature.id}:`, error);
+      } else if (insertedFeature) {
+        idMaps.features[feature.id] = insertedFeature.id;
+      }
+    } catch (error) {
+      console.error(`Error storing feature ${feature.id}:`, error);
+    }
+  }
+  console.log(`Stored ${Object.keys(idMaps.features).length} features`);
+
+  // 5. Update feature parent relationships (second pass)
+  console.log("Updating feature parent relationships...");
+  for (const feature of features) {
+    if (feature.parent_id && idMaps.features[feature.parent_id]) {
+      try {
+        const { error } = await supabase
+          .from("productboard_features_extended")
+          .update({
+            parent_id: idMaps.features[feature.parent_id],
+          })
+          .eq("productboard_id", feature.id);
+
+        if (error) {
+          console.error(`Error updating parent for feature ${feature.id}:`, error);
+        }
+      } catch (error) {
+        console.error(`Error updating parent for feature ${feature.id}:`, error);
+      }
+    }
+  }
+  console.log("Updated feature parent relationships");
+
+  // 6. Store initiative-feature relationships
+  console.log("Storing initiative-feature relationships...");
+  const { initiativeFeatures } = relationships;
+  let initiativeFeatureCount = 0;
+  
+  for (const [initiativeId, featureIds] of Object.entries(initiativeFeatures)) {
+    if (idMaps.initiatives[initiativeId]) {
+      for (const featureId of featureIds) {
+        if (idMaps.features[featureId]) {
+          try {
+            const { error } = await supabase
+              .from("productboard_initiative_features_extended")
+              .upsert({
+                initiative_id: idMaps.initiatives[initiativeId],
+                feature_id: idMaps.features[featureId],
+                workspace_id,
+              });
+
+            if (error) {
+              console.error(`Error storing initiative-feature link ${initiativeId}-${featureId}:`, error);
+            } else {
+              initiativeFeatureCount++;
+            }
+          } catch (error) {
+            console.error(`Error storing initiative-feature link ${initiativeId}-${featureId}:`, error);
+          }
+        }
+      }
+    }
+  }
+  console.log(`Stored ${initiativeFeatureCount} initiative-feature relationships`);
+
+  // 7. Store component-initiative relationships
+  console.log("Storing component-initiative relationships...");
+  const { initiativeComponents } = relationships;
+  let initiativeComponentCount = 0;
+  
+  for (const [initiativeId, componentIds] of Object.entries(initiativeComponents)) {
+    if (idMaps.initiatives[initiativeId]) {
+      for (const componentId of componentIds) {
+        if (idMaps.components[componentId]) {
+          try {
+            const { error } = await supabase
+              .from("productboard_component_initiatives_extended")
+              .upsert({
+                component_id: idMaps.components[componentId],
+                initiative_id: idMaps.initiatives[initiativeId],
+                direct_link: false, // These are inferred, not direct
+                link_via_feature: null, // We don't know which feature specifically
+                workspace_id,
+              });
+
+            if (error && error.code !== "23505") { // Ignore unique constraint violations
+              console.error(`Error storing component-initiative link ${componentId}-${initiativeId}:`, error);
+            } else {
+              initiativeComponentCount++;
+            }
+          } catch (error) {
+            console.error(`Error storing component-initiative link ${componentId}-${initiativeId}:`, error);
+          }
+        }
+      }
+    }
+  }
+  console.log(`Stored ${initiativeComponentCount} component-initiative relationships`);
+
+  console.log("Finished storing all data");
+  
+  return { idMaps };
+}
+
+// Main handler function
+Deno.serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders,
+    });
+  }
+
+  // Verify it's a POST request
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed" }),
+      {
+        status: 405,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  try {
+    // Parse and validate request body
+    const body = await req.json();
+    const { 
+      workspace_id, 
+      api_key, 
+      product_id, 
+      initiative_id,
+      include_features,
+      include_components,
+      include_initiatives,
+      max_depth 
+    } = RequestSchema.parse(body);
+
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Create a new sync history record
+    const { data: syncHistory, error: syncHistoryError } = await supabase
+      .from("productboard_hierarchy_sync_history")
+      .insert({
+        workspace_id,

@@ -1,0 +1,695 @@
+import { createClient } from "npm:@supabase/supabase-js@2.39.7";
+import { z } from "npm:zod@3.22.4";
+import axios from "npm:axios@1.6.7";
+
+// Complete CORS headers for development
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Info, X-Requested-With, Accept',
+  'Access-Control-Max-Age': '86400', // 24 hours cache for preflight requests
+};
+
+// Define request schema
+const RequestSchema = z.object({
+  workspace_id: z.string().uuid(),
+  api_key: z.string().min(1),
+  product_id: z.string().optional(), // Optional: limit to specific product
+  initiative_id: z.string().optional(), // Optional: limit to specific initiative
+  include_features: z.boolean().default(true),
+  include_components: z.boolean().default(true),
+  include_initiatives: z.boolean().default(true),
+  max_depth: z.number().min(1).max(10).default(5), // Maximum recursion depth for feature hierarchy
+});
+
+// Helper function to make internal API calls
+async function callInternalApi(
+  apiName: string,
+  params: Record<string, any>
+): Promise<any> {
+  const baseUrl = Deno.env.get("SUPABASE_URL") || "";
+  const apiKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  
+  console.log(`Calling internal API: ${apiName} with params:`, JSON.stringify(params));
+
+  try {
+    const response = await fetch(`${baseUrl}/functions/v1/${apiName}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Error calling ${apiName}: ${response.status} ${errorText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error(`Error calling internal API ${apiName}:`, error);
+    throw error;
+  }
+}
+
+// Function to fetch products from ProductBoard
+async function fetchProducts(api_key: string, product_id?: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-products", {
+      api_key,
+      product_id,
+    });
+
+    if (!response.success) {
+      throw new Error(`Failed to fetch products: ${response.error}`);
+    }
+
+    // If a specific product was requested, return as array
+    if (product_id) {
+      return [response.data];
+    }
+
+    // Otherwise return the array of products
+    return response.data.data || [];
+  } catch (error) {
+    console.error("Error fetching products:", error);
+    throw error;
+  }
+}
+
+// Function to fetch components for a product
+async function fetchComponents(api_key: string, product_id?: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-components", {
+      api_key,
+      product_id,
+    });
+
+    if (!response.success) {
+      throw new Error(`Failed to fetch components: ${response.error}`);
+    }
+
+    return response.data.data || [];
+  } catch (error) {
+    console.error("Error fetching components:", error);
+    throw error;
+  }
+}
+
+// Function to fetch initiatives
+async function fetchInitiatives(api_key: string, initiative_id?: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-initiatives", {
+      api_key,
+      initiative_id,
+    });
+
+    if (!response.success) {
+      throw new Error(`Failed to fetch initiatives: ${response.error}`);
+    }
+
+    // If a specific initiative was requested, return as array
+    if (initiative_id) {
+      return [response.data];
+    }
+
+    // Otherwise return the array of initiatives
+    return response.data.data || [];
+  } catch (error) {
+    console.error("Error fetching initiatives:", error);
+    throw error;
+  }
+}
+
+// Function to fetch features for a component
+async function fetchComponentFeatures(api_key: string, component_id: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-features", {
+      api_key,
+      component_id,
+    });
+
+    if (!response.success) {
+      throw new Error(`Failed to fetch component features: ${response.error}`);
+    }
+
+    return response.data.data || [];
+  } catch (error) {
+    console.error(`Error fetching features for component ${component_id}:`, error);
+    throw error;
+  }
+}
+
+// Function to fetch sub-features for a parent feature
+async function fetchSubFeatures(api_key: string, parent_id: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-features", {
+      api_key,
+      parent_id,
+    });
+
+    if (!response.success) {
+      throw new Error(`Failed to fetch sub-features: ${response.error}`);
+    }
+
+    return response.data.data || [];
+  } catch (error) {
+    console.error(`Error fetching sub-features for parent ${parent_id}:`, error);
+    throw error;
+  }
+}
+
+// Function to fetch features linked to an initiative
+async function fetchInitiativeFeatures(api_key: string, initiative_id: string): Promise<any[]> {
+  try {
+    const response = await callInternalApi("get-productboard-initiative-features", {
+      api_key,
+      initiative_id,
+    });
+
+    if (!response.success) {
+      throw new Error(`Failed to fetch initiative features: ${response.error}`);
+    }
+
+    return response.data.data?.features || [];
+  } catch (error) {
+    console.error(`Error fetching features for initiative ${initiative_id}:`, error);
+    throw error;
+  }
+}
+
+// Main handler function
+Deno.serve(async (req) => {
+  // Handle CORS preflight requests
+  if (req.method === "OPTIONS") {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders,
+    });
+  }
+
+  // Verify it's a POST request
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed" }),
+      {
+        status: 405,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+
+  try {
+    // Parse and validate request body
+    const body = await req.json();
+    const { 
+      workspace_id, 
+      api_key, 
+      product_id, 
+      initiative_id,
+      include_features,
+      include_components,
+      include_initiatives,
+      max_depth 
+    } = RequestSchema.parse(body);
+
+    // Initialize Supabase client
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") || "";
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Create a new sync history record
+    const { data: syncHistory, error: syncHistoryError } = await supabase
+      .from("productboard_hierarchy_sync_history")
+      .insert({
+        workspace_id,
+        status: "in_progress",
+        started_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+
+    if (syncHistoryError) {
+      console.error("Failed to create sync history:", syncHistoryError);
+      throw new Error(`Failed to initialize sync: ${syncHistoryError.message}`);
+    }
+
+    const syncHistoryId = syncHistory.id;
+    console.log(`Started sync with ID: ${syncHistoryId}`);
+
+    // Note: Removed transaction handling as it's not needed and was causing errors
+    // No getClient() method in the Supabase JS client
+    
+    // Collect all the data to store
+    let products: any[] = [];
+    let components: any[] = [];
+    let initiatives: any[] = [];
+    let features: any[] = [];
+    let initiativeFeatures: Record<string, string[]> = {}; // Map of initiative ID to feature IDs
+    let results = {
+      products: 0,
+      components: 0,
+      features: 0,
+      initiatives: 0,
+      initiativeFeatures: 0,
+      componentInitiatives: 0,
+      errors: [] as string[],
+    };
+
+    try {
+      // 1. Fetch products
+      products = await fetchProducts(api_key, product_id);
+      results.products = products.length;
+      console.log(`Fetched ${products.length} products`);
+
+      // 2. Fetch components if included
+      if (include_components) {
+        for (const product of products) {
+          const productComponents = await fetchComponents(api_key, product.id);
+          components.push(...productComponents.map(c => ({ ...c, product_id: product.id })));
+        }
+        results.components = components.length;
+        console.log(`Fetched ${components.length} components`);
+      }
+
+      // 3. Fetch initiatives if included
+      if (include_initiatives) {
+        initiatives = await fetchInitiatives(api_key, initiative_id);
+        results.initiatives = initiatives.length;
+        console.log(`Fetched ${initiatives.length} initiatives`);
+
+        // Fetch features linked to each initiative
+        for (const initiative of initiatives) {
+          const linkedFeatures = await fetchInitiativeFeatures(api_key, initiative.id);
+          initiativeFeatures[initiative.id] = linkedFeatures.map(f => f.id);
+          
+          // Add these features to our collection if we don't have them yet
+          features.push(...linkedFeatures.filter(f => !features.some(existing => existing.id === f.id)));
+        }
+      }
+
+      // 4. Fetch features if included
+      if (include_features) {
+        // Fetch features by component
+        for (const component of components) {
+          const componentFeatures = await fetchComponentFeatures(api_key, component.id);
+          
+          // Add these features to our collection if we don't have them yet
+          for (const feature of componentFeatures) {
+            if (!features.some(existing => existing.id === feature.id)) {
+              features.push({ ...feature, component_id: component.id });
+            } else {
+              // Update the component_id for features we already have
+              const existingFeature = features.find(existing => existing.id === feature.id);
+              if (existingFeature) {
+                existingFeature.component_id = component.id;
+              }
+            }
+          }
+          
+          // Now recursively fetch sub-features up to max_depth
+          await fetchFeatureHierarchy(api_key, componentFeatures, features, 1, max_depth);
+        }
+        
+        results.features = features.length;
+        console.log(`Fetched ${features.length} total features`);
+      }
+
+      // 5. Store all the data in the database
+      await storeData(
+        supabase,
+        workspace_id,
+        syncHistoryId,
+        products,
+        components,
+        initiatives,
+        features,
+        initiativeFeatures
+      );
+
+      // 6. Update sync history record
+      await supabase
+        .from("productboard_hierarchy_sync_history")
+        .update({
+          status: "completed",
+          products_count: results.products,
+          components_count: results.components,
+          features_count: results.features,
+          initiatives_count: results.initiatives,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", syncHistoryId);
+
+      console.log("Sync completed successfully");
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: "ProductBoard hierarchy successfully synchronized",
+          data: {
+            sync_id: syncHistoryId,
+            ...results
+          },
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+        }
+      );
+    } catch (error) {
+      console.error("Error during sync process:", error);
+      
+      // Update sync history with error
+      await supabase
+        .from("productboard_hierarchy_sync_history")
+        .update({
+          status: "failed",
+          error_message: error instanceof Error ? error.message : String(error),
+          products_count: results.products,
+          components_count: results.components,
+          features_count: results.features,
+          initiatives_count: results.initiatives,
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", syncHistoryId);
+
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Failed to synchronize ProductBoard hierarchy",
+          message: error instanceof Error ? error.message : String(error),
+          data: {
+            sync_id: syncHistoryId,
+            ...results
+          },
+        }),
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+            ...corsHeaders,
+          },
+        }
+      );
+    }
+  } catch (error) {
+    console.error("Error processing request:", error);
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: "Failed to process request",
+        message: error instanceof Error ? error.message : String(error),
+      }),
+      {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          ...corsHeaders,
+        },
+      }
+    );
+  }
+});
+
+// Recursive function to fetch feature hierarchy
+async function fetchFeatureHierarchy(
+  api_key: string,
+  parentFeatures: any[],
+  allFeatures: any[],
+  currentDepth: number,
+  maxDepth: number
+): Promise<void> {
+  if (currentDepth >= maxDepth || parentFeatures.length === 0) {
+    return;
+  }
+
+  for (const parentFeature of parentFeatures) {
+    try {
+      const subFeatures = await fetchSubFeatures(api_key, parentFeature.id);
+      
+      // Add sub-features to our collection with parent reference
+      for (const feature of subFeatures) {
+        if (!allFeatures.some(existing => existing.id === feature.id)) {
+          allFeatures.push({
+            ...feature,
+            parent_id: parentFeature.id,
+            component_id: parentFeature.component_id,
+          });
+        } else {
+          // Update parent ID for features we already have
+          const existingFeature = allFeatures.find(existing => existing.id === feature.id);
+          if (existingFeature) {
+            existingFeature.parent_id = parentFeature.id;
+            if (!existingFeature.component_id && parentFeature.component_id) {
+              existingFeature.component_id = parentFeature.component_id;
+            }
+          }
+        }
+      }
+      
+      // Recursively fetch the next level
+      await fetchFeatureHierarchy(api_key, subFeatures, allFeatures, currentDepth + 1, maxDepth);
+    } catch (error) {
+      console.error(`Error fetching sub-features for ${parentFeature.id}:`, error);
+      // Continue with other features even if one fails
+    }
+  }
+}
+
+// Helper function to store all data in the database
+async function storeData(
+  supabase: any,
+  workspace_id: string,
+  sync_id: string,
+  products: any[],
+  components: any[],
+  initiatives: any[],
+  features: any[],
+  initiativeFeatures: Record<string, string[]>
+): Promise<void> {
+  // Map to store original IDs to database IDs
+  const idMap = {
+    products: {} as Record<string, string>,
+    components: {} as Record<string, string>,
+    initiatives: {} as Record<string, string>,
+    features: {} as Record<string, string>,
+  };
+
+  // 1. Store products
+  for (const product of products) {
+    try {
+      const { data: insertedProduct, error } = await supabase
+        .from("productboard_products_extended")
+        .upsert({
+          productboard_id: product.id,
+          name: product.name,
+          description: product.description || null,
+          status: product.status || null,
+          metadata: cleanMetadata(product),
+          workspace_id,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(`Error storing product ${product.id}:`, error);
+      } else if (insertedProduct) {
+        idMap.products[product.id] = insertedProduct.id;
+      }
+    } catch (error) {
+      console.error(`Error storing product ${product.id}:`, error);
+    }
+  }
+
+  // 2. Store components with product references
+  for (const component of components) {
+    try {
+      const { data: insertedComponent, error } = await supabase
+        .from("productboard_components_extended")
+        .upsert({
+          productboard_id: component.id,
+          name: component.name,
+          description: component.description || null,
+          status: component.status || null,
+          metadata: cleanMetadata(component),
+          workspace_id,
+          product_id: component.product_id ? idMap.products[component.product_id] : null,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(`Error storing component ${component.id}:`, error);
+      } else if (insertedComponent) {
+        idMap.components[component.id] = insertedComponent.id;
+      }
+    } catch (error) {
+      console.error(`Error storing component ${component.id}:`, error);
+    }
+  }
+
+  // 3. Store initiatives with product references
+  for (const initiative of initiatives) {
+    try {
+      // Try to determine the product_id from initiative data
+      const productId = initiative.product?.id || initiative.productId || null;
+      
+      const { data: insertedInitiative, error } = await supabase
+        .from("productboard_initiatives_extended")
+        .upsert({
+          productboard_id: initiative.id,
+          name: initiative.name,
+          description: initiative.description || null,
+          status: initiative.status || null,
+          timeframe: initiative.timeframe || null,
+          owner: initiative.owner || null,
+          metadata: cleanMetadata(initiative),
+          workspace_id,
+          product_id: productId ? idMap.products[productId] : null,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(`Error storing initiative ${initiative.id}:`, error);
+      } else if (insertedInitiative) {
+        idMap.initiatives[initiative.id] = insertedInitiative.id;
+      }
+    } catch (error) {
+      console.error(`Error storing initiative ${initiative.id}:`, error);
+    }
+  }
+
+  // 4. Store features with component and parent references
+  // First pass: Store all features without parent references
+  for (const feature of features) {
+    try {
+      const componentId = feature.component_id ? idMap.components[feature.component_id] : null;
+      
+      const { data: insertedFeature, error } = await supabase
+        .from("productboard_features_extended")
+        .upsert({
+          productboard_id: feature.id,
+          name: feature.name,
+          description: feature.description || null,
+          status: feature.status || null,
+          target_start_date: feature.targetStart || null,
+          target_end_date: feature.targetEnd || null,
+          owner: feature.owner || null,
+          metadata: cleanMetadata(feature),
+          workspace_id,
+          component_id: componentId,
+          parent_id: null, // We'll update this in the second pass
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error(`Error storing feature ${feature.id}:`, error);
+      } else if (insertedFeature) {
+        idMap.features[feature.id] = insertedFeature.id;
+      }
+    } catch (error) {
+      console.error(`Error storing feature ${feature.id}:`, error);
+    }
+  }
+
+  // Second pass: Update parent references for features
+  for (const feature of features) {
+    if (feature.parent_id && idMap.features[feature.parent_id]) {
+      try {
+        const { error } = await supabase
+          .from("productboard_features_extended")
+          .update({
+            parent_id: idMap.features[feature.parent_id],
+          })
+          .eq("productboard_id", feature.id);
+
+        if (error) {
+          console.error(`Error updating parent for feature ${feature.id}:`, error);
+        }
+      } catch (error) {
+        console.error(`Error updating parent for feature ${feature.id}:`, error);
+      }
+    }
+  }
+
+  // 5. Store initiative-feature links
+  for (const [initiativeId, featureIds] of Object.entries(initiativeFeatures)) {
+    if (idMap.initiatives[initiativeId]) {
+      for (const featureId of featureIds) {
+        if (idMap.features[featureId]) {
+          try {
+            const { error } = await supabase
+              .from("productboard_initiative_features_extended")
+              .upsert({
+                initiative_id: idMap.initiatives[initiativeId],
+                feature_id: idMap.features[featureId],
+                workspace_id,
+              });
+
+            if (error) {
+              console.error(`Error storing initiative-feature link ${initiativeId}-${featureId}:`, error);
+            }
+          } catch (error) {
+            console.error(`Error storing initiative-feature link ${initiativeId}-${featureId}:`, error);
+          }
+        }
+      }
+    }
+  }
+
+  // 6. Infer and store component-initiative links
+  // For each feature that belongs to both a component and an initiative
+  for (const feature of features) {
+    if (feature.component_id && idMap.components[feature.component_id]) {
+      // Check if this feature is linked to any initiatives
+      for (const [initiativeId, featureIds] of Object.entries(initiativeFeatures)) {
+        if (idMap.initiatives[initiativeId] && featureIds.includes(feature.id)) {
+          try {
+            const { error } = await supabase
+              .from("productboard_component_initiatives_extended")
+              .upsert({
+                component_id: idMap.components[feature.component_id],
+                initiative_id: idMap.initiatives[initiativeId],
+                direct_link: false,
+                link_via_feature: idMap.features[feature.id],
+                workspace_id,
+              });
+
+            if (error && error.code !== "23505") { // Ignore unique constraint violations
+              console.error(`Error storing component-initiative link ${feature.component_id}-${initiativeId}:`, error);
+            }
+          } catch (error) {
+            console.error(`Error storing component-initiative link ${feature.component_id}-${initiativeId}:`, error);
+          }
+        }
+      }
+    }
+  }
+}
+
+// Helper function to clean object for metadata storage
+function cleanMetadata(obj: any): Record<string, any> {
+  // Create a copy of the object
+  const metadata = { ...obj };
+  
+  // Remove fields that are already stored in dedicated columns
+  const fieldsToRemove = [
+    'id', 'name', 'description', 'status', 'targetStart', 'targetEnd',
+    'owner', 'product_id', 'component_id', 'parent_id', 'product', 'components'
+  ];
+  
+  for (const field of fieldsToRemove) {
+    delete metadata[field];
+  }
+  
+  return metadata;
+}

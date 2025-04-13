@@ -1,0 +1,17 @@
+{
+  "name": "pb-connect",
+  "version": "1.0.0",
+  "description": "Connect ProductBoard with Supabase to sync data",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+
+    /* Bundler mode */
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+
+    /* Linting */
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    
+    /* Path aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./*"], // Adjusted for root files/folders
+      "@components/*": ["./components/*"],
+      "@features/*": ["./features/*"],
+      "@hooks/*": ["./hooks/*"],
+      "@lib/*": ["./lib/*"], // Added alias for lib
+      "@utils/*": ["./utils/*"],
+      "@services/*": ["./services/*"],
+      "@types/*": ["./types/*"],
+      "@constants/*": ["./constants/*"],
+      "@assets/*": ["./assets/*"]
+    }
+  },
+  // Include all relevant TS/TSX files directly under src_rebuild
+  "include": ["./*.ts", "./*.tsx", "./components", "./features", "./hooks", "./lib", "./services", "./types", "./utils"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+}
