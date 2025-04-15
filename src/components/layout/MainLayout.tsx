@@ -17,16 +17,12 @@ export const MainLayout: React.FC = () => {
     return location.pathname.startsWith(path);
   };
   
-  // Navigation items
+  // Navigation items - only showing grooming, grooming assistant, story creator, and admin as requested
   const navItems = [
-    { path: '/dashboard', label: 'Dashboard' },
-    { path: '/hierarchy', label: 'Hierarchy' },
-    { path: '/features', label: 'Features' },
-    { path: '/rankings', label: 'Rankings' },
-    { path: '/stories', label: 'Stories' },
     { path: '/grooming', label: 'Grooming' },
-    { path: '/sync', label: 'Sync' },
-    { path: '/admin', label: 'Admin' }, // Added Admin link
+    { path: '/grooming-assistant', label: 'Grooming Assistant' },
+    { path: '/story-creator', label: 'Story Creator' },
+    { path: '/admin', label: 'Admin' },
   ];
 
   return (
