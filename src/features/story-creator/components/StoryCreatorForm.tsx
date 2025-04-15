@@ -426,7 +426,11 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
       </div>
 
       <form className="space-y-4">
-        {fields.map((field) => renderField(field))}
+        {/* Always render hierarchy level first */}
+        {renderField('hierarchy_level')}
+        
+        {/* Then render all other fields except hierarchy_level */}
+        {fields.filter(field => field !== 'hierarchy_level').map((field) => renderField(field))}
       </form>
     </div>
   );
