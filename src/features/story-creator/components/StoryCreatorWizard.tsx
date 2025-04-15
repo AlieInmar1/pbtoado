@@ -55,7 +55,9 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
     default_content: {
       title: '',
       description: '',
-      acceptance_criteria: []
+      acceptance_criteria: [],
+      parent_feature_id: '',
+      component_id: ''
     },
     required_fields: ['title'],
     suggested_acceptance_criteria: [],
@@ -139,17 +141,21 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
     try {
       // For freehand stories, we create directly in the database
       if (isFreehand) {
+        // Determine if this is a feature or a story based on whether parent_feature_id is set
+        const isFeature = !storyContent.parent_feature_id;
+        
         const { data, error: dbError } = await supabase
           .from('grooming_stories')
           .insert([{
             title: storyContent.title,
             description: storyContent.description || '',
             acceptance_criteria: storyContent.acceptance_criteria || [],
-            parent_story_id: parentId,
+            parent_story_id: isFeature ? null : storyContent.parent_feature_id,
+            component_id: isFeature ? storyContent.component_id : null,
             workspace_id: currentWorkspace.id,
             status: 'new',
             complexity: storyContent.complexity || 1,
-            story_type: 'feature'
+            story_type: isFeature ? 'feature' : 'story'
           }])
           .select()
           .single();

@@ -1,5 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { StoryTemplate, StoryContent } from '../../../types/story-creator';
+import { useFeatures } from '../../../hooks/useFeatures';
+import { useComponents } from '../../../hooks/useComponents';
 
 interface StoryCreatorFormProps {
   template: StoryTemplate | null;
@@ -28,11 +30,95 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
     onChange(field, value);
   };
 
+  // Get features and components
+  const { features, isLoading: featuresLoading } = useFeatures();
+  const { components, isLoading: componentsLoading } = useComponents();
+  
+  // State for ideas/problems input
+  const [ideaInput, setIdeaInput] = useState<string>('');
+  
+  // Function to generate title and description from ideas/problems
+  const generateFromIdea = () => {
+    if (!ideaInput.trim()) return;
+    
+    // Simple transformation for now - in a real implementation, this would use AI
+    const lines = ideaInput.split('\n').filter(line => line.trim());
+    
+    if (lines.length > 0) {
+      // Use first line as title
+      handleInputChange('title', lines[0]);
+      
+      // Use remaining lines as description
+      if (lines.length > 1) {
+        const description = lines.slice(1).join('\n\n');
+        handleInputChange('description', description);
+      }
+    }
+    
+    // Clear the idea input
+    setIdeaInput('');
+  };
+
   const renderField = (field: string) => {
     const value = content[field];
     const isRequired = template.required_fields.includes(field);
 
     switch (field) {
+      case 'parent_feature_id':
+        // Only show for stories (not features)
+        if (template.type !== 'feature') {
+          return (
+            <div key={field} className="mb-4">
+              <label htmlFor={field} className="block text-sm font-medium text-gray-700">
+                Parent Feature {isRequired && <span className="text-red-500">*</span>}
+              </label>
+              <select
+                id={field}
+                value={value || ''}
+                onChange={(e) => handleInputChange(field, e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                required={isRequired}
+              >
+                <option value="">Select a parent feature</option>
+                {features
+                  .filter(feature => feature.type === 'feature')
+                  .map(feature => (
+                    <option key={feature.id} value={feature.id}>
+                      {feature.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          );
+        }
+        return null;
+        
+      case 'component_id':
+        // Only show for features
+        if (template.type === 'feature') {
+          return (
+            <div key={field} className="mb-4">
+              <label htmlFor={field} className="block text-sm font-medium text-gray-700">
+                Component {isRequired && <span className="text-red-500">*</span>}
+              </label>
+              <select
+                id={field}
+                value={value || ''}
+                onChange={(e) => handleInputChange(field, e.target.value)}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+                required={isRequired}
+              >
+                <option value="">Select a component</option>
+                {components.map(component => (
+                  <option key={component.id} value={component.productboard_id}>
+                    {component.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          );
+        }
+        return null;
       case 'title':
         return (
           <div key={field} className="mb-4">
@@ -224,7 +310,7 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
 
   // Get all fields from the template's default content
   const fields = Object.keys(content).filter(
-    (field) => field !== 'parent_id' && field !== 'workspace_id'
+    (field) => field !== 'workspace_id'
   );
 
   return (
@@ -278,6 +364,40 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
               Get AI Suggestions
             </>
           )}
+        </button>
+      </div>
+
+      {/* Ideas/Problems Input */}
+      <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+        <h4 className="text-md font-medium text-blue-800 mb-2">Quick Idea Entry</h4>
+        <p className="text-sm text-blue-600 mb-3">
+          Enter your ideas or problems here, and we'll help format them into a proper story.
+        </p>
+        <textarea
+          value={ideaInput}
+          onChange={(e) => setIdeaInput(e.target.value)}
+          rows={4}
+          placeholder="Type your ideas or problems here... First line will become the title, remaining text will be the description."
+          className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
+        />
+        <button
+          type="button"
+          onClick={generateFromIdea}
+          className="mt-2 inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-4 w-4 mr-1"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+          >
+            <path
+              fillRule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414z"
+              clipRule="evenodd"
+            />
+          </svg>
+          Generate Story
         </button>
       </div>
 

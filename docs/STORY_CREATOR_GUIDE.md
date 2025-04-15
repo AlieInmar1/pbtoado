@@ -34,7 +34,10 @@ The Story Creator is a sophisticated tool designed to streamline the process of 
 3. Choose between:
    - **Freehand Story**: Create a story from scratch with full creative freedom
    - **Template-Based Story**: Select an appropriate template for your story type
-4. Fill in the required fields and any additional information
+4. Fill in the required fields and any additional information:
+   - For stories, select the parent feature it belongs to
+   - For features, select the component it belongs to
+   - Use the "Quick Idea Entry" box to quickly transform your ideas into structured stories
 5. Click "Get AI Suggestions" to receive AI-powered recommendations
 6. Apply any suggestions you find helpful
 7. Review your story in the preview step
@@ -63,8 +66,10 @@ The Story Creator integrates seamlessly with:
 1. **Use Templates Consistently**: Create and use templates that match your organization's story structure
 2. **Leverage AI Suggestions**: Always review AI suggestions to improve story quality
 3. **Complete All Fields**: Fill in all relevant fields for comprehensive stories
-4. **Review Before Submission**: Always preview stories before final submission
-5. **Maintain Templates**: Regularly update templates to reflect evolving team needs
+4. **Use Quick Idea Entry**: For rapid story creation, use the Quick Idea Entry box to transform your ideas into structured stories
+5. **Set Proper Relationships**: Always select the appropriate parent feature for stories and component for features
+6. **Review Before Submission**: Always preview stories before final submission
+7. **Maintain Templates**: Regularly update templates to reflect evolving team needs
 
 ## Technical Implementation
 
