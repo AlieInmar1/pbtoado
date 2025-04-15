@@ -31,7 +31,9 @@ The Story Creator is a sophisticated tool designed to streamline the process of 
 
 1. Navigate to the Story Creator page (`/story-creator`)
 2. Click "Create New Story" to start the wizard
-3. Select an appropriate template for your story type
+3. Choose between:
+   - **Freehand Story**: Create a story from scratch with full creative freedom
+   - **Template-Based Story**: Select an appropriate template for your story type
 4. Fill in the required fields and any additional information
 5. Click "Get AI Suggestions" to receive AI-powered recommendations
 6. Apply any suggestions you find helpful

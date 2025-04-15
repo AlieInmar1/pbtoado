@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useWorkspace } from '../../../contexts/WorkspaceContext';
 import { useStoryCreator } from '../../../hooks/useStoryCreator';
-import { StoryTemplate, StoryContent, AIAnalysisResult } from '../../../types/story-creator';
+import { StoryTemplate, StoryContent, AIAnalysisResult, StoryCreationResult } from '../../../types/story-creator';
+import { supabase } from '../../../lib/supabase';
 import TemplateSelector from './TemplateSelector';
 import StoryCreatorForm from './StoryCreatorForm';
 import AIRecommendationPanel from './AIRecommendationPanel';
@@ -43,6 +44,25 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
   const [storyContent, setStoryContent] = useState<StoryContent | null>(null);
   const [createdStoryId, setCreatedStoryId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isFreehand, setIsFreehand] = useState<boolean>(false);
+  
+  // Default template for freehand stories
+  const freehandTemplate: StoryTemplate = {
+    id: 'freehand',
+    name: 'Freehand Story',
+    type: 'feature',
+    description: 'Create a story from scratch without using a template',
+    default_content: {
+      title: '',
+      description: '',
+      acceptance_criteria: []
+    },
+    required_fields: ['title'],
+    suggested_acceptance_criteria: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    workspace_id: currentWorkspace?.id || ''
+  };
   
   // Initialize story content when template is selected
   useEffect(() => {
@@ -57,6 +77,14 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
   // Handle template selection
   const handleTemplateSelect = (template: StoryTemplate) => {
     setSelectedTemplate(template);
+    setIsFreehand(false);
+    setCurrentStep(WizardStep.EnterDetails);
+  };
+  
+  // Handle freehand selection
+  const handleFreehandSelect = () => {
+    setSelectedTemplate(freehandTemplate);
+    setIsFreehand(true);
     setCurrentStep(WizardStep.EnterDetails);
   };
   
@@ -109,24 +137,59 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
     if (!storyContent || !selectedTemplate || !currentWorkspace) return;
     
     try {
-      const result = await createStory({
+      // For freehand stories, we create directly in the database
+      if (isFreehand) {
+        const { data, error: dbError } = await supabase
+          .from('grooming_stories')
+          .insert([{
+            title: storyContent.title,
+            description: storyContent.description || '',
+            acceptance_criteria: storyContent.acceptance_criteria || [],
+            parent_story_id: parentId,
+            workspace_id: currentWorkspace.id,
+            status: 'new',
+            complexity: storyContent.complexity || 1,
+            story_type: 'feature'
+          }])
+          .select()
+          .single();
+          
+        if (dbError) {
+          throw dbError;
+        }
+        
+        setCreatedStoryId(data.id);
+        setCurrentStep(WizardStep.Submitted);
+        if (onComplete) {
+          onComplete(data.id);
+        }
+      } else {
+      // For template-based stories, use the existing API
+      createStory({
         template_id: selectedTemplate.id,
         content: storyContent,
         parent_id: parentId,
         workspace_id: currentWorkspace.id
-      });
-      
-      if (result.success) {
-        setCreatedStoryId(result.story_id);
-        setCurrentStep(WizardStep.Submitted);
-        if (onComplete) {
-          onComplete(result.story_id);
+      }, {
+        onSuccess: (result: StoryCreationResult) => {
+          if (result.success) {
+            setCreatedStoryId(result.story_id);
+            setCurrentStep(WizardStep.Submitted);
+            if (onComplete) {
+              onComplete(result.story_id);
+            }
+          } else {
+            setError(result.error || 'Failed to create story');
+          }
+        },
+        onError: (err: Error) => {
+          setError(err.message || 'Failed to create story');
         }
-      } else {
-        setError(result.error || 'Failed to create story');
+      });
       }
     } catch (err) {
       setError('An error occurred while creating the story');
+      console.error('Error creating story:', err);
     }
   };
   
@@ -139,6 +202,7 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
             templates={templates}
             isLoading={templatesLoading}
             onSelect={handleTemplateSelect}
+            onFreehandSelect={handleFreehandSelect}
           />
         );
         
@@ -257,7 +321,7 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Create New Story</h2>
         <p className="text-gray-600">
-          {currentStep === WizardStep.SelectTemplate && 'Select a template to get started'}
+          {currentStep === WizardStep.SelectTemplate && 'Select a template or create a freehand story'}
           {currentStep === WizardStep.EnterDetails && 'Fill in the details for your story'}
           {currentStep === WizardStep.ReviewAndSubmit && 'Review your story before submitting'}
           {currentStep === WizardStep.Submitted && 'Your story has been created'}
