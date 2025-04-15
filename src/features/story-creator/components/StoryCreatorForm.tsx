@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { StoryTemplate, StoryContent } from '../../../types/story-creator';
 import { useFeatures } from '../../../hooks/useFeatures';
 import { useComponents } from '../../../hooks/useComponents';
@@ -34,8 +34,46 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
   const { features, isLoading: featuresLoading } = useFeatures();
   const { components, isLoading: componentsLoading } = useComponents();
   
-  // State for ideas/problems input
+  // State for ideas/problems input and filtered features/components
   const [ideaInput, setIdeaInput] = useState<string>('');
+  const [filteredFeatures, setFilteredFeatures] = useState<any[]>([]);
+  const [filteredComponents, setFilteredComponents] = useState<any[]>([]);
+  
+  // Filter components that appear as parents in the features table
+  useEffect(() => {
+    if (features.length > 0 && components.length > 0) {
+      // Get unique parent_ids from features
+      const parentIds = new Set(
+        features
+          .filter(feature => feature.parent_id)
+          .map(feature => feature.parent_id)
+      );
+      
+      // Filter components that appear as parents
+      const componentsInFeatures = components.filter(component => 
+        parentIds.has(component.productboard_id)
+      );
+      
+      setFilteredComponents(componentsInFeatures);
+    } else {
+      setFilteredComponents(components);
+    }
+  }, [features, components]);
+  
+  // Filter features based on selected component
+  useEffect(() => {
+    if (content.component_id && features.length > 0) {
+      // Filter features that have the selected component as their parent
+      const filtered = features.filter(feature => 
+        feature.type === 'feature' && 
+        feature.parent_id === content.component_id
+      );
+      setFilteredFeatures(filtered);
+    } else {
+      // If no component is selected, show all features
+      setFilteredFeatures(features.filter(feature => feature.type === 'feature'));
+    }
+  }, [content.component_id, features]);
   
   // Function to generate title and description from ideas/problems
   const generateFromIdea = () => {
@@ -101,12 +139,21 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
               required={isRequired}
             >
               <option value="">Select a component</option>
-              {components.map(component => (
-                <option key={component.id} value={component.productboard_id}>
-                  {component.name}
-                </option>
-              ))}
+              {filteredComponents.length > 0 ? (
+                filteredComponents.map(component => (
+                  <option key={component.id} value={component.productboard_id}>
+                    {component.name}
+                  </option>
+                ))
+              ) : (
+                <option value="" disabled>No components found with features</option>
+              )}
             </select>
+            {filteredComponents.length === 0 && (
+              <p className="mt-1 text-xs text-amber-500">
+                No components found that have features. Please create features for components first.
+              </p>
+            )}
           </div>
         );
         
@@ -126,14 +173,30 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
                 required={isRequired}
               >
                 <option value="">Select a parent feature</option>
-                {features
-                  .filter(feature => feature.type === 'feature')
-                  .map(feature => (
+                {filteredFeatures.length > 0 ? (
+                  filteredFeatures.map(feature => (
                     <option key={feature.id} value={feature.id}>
                       {feature.name}
                     </option>
-                  ))}
+                  ))
+                ) : (
+                  <option value="" disabled>
+                    {content.component_id 
+                      ? "No features found for selected component" 
+                      : "Please select a component first"}
+                  </option>
+                )}
               </select>
+              {content.component_id && filteredFeatures.length === 0 && (
+                <p className="mt-1 text-xs text-amber-500">
+                  No features found for this component. Please create a feature first or select a different component.
+                </p>
+              )}
+              {!content.component_id && (
+                <p className="mt-1 text-xs text-amber-500">
+                  Please select a component to see available features.
+                </p>
+              )}
             </div>
           );
         }
@@ -424,8 +487,20 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
         {/* Always render hierarchy level first */}
         {renderField('hierarchy_level')}
         
-        {/* Then render all other fields except hierarchy_level */}
-        {fields.filter(field => field !== 'hierarchy_level').map((field) => renderField(field))}
+        {/* Then render component selector */}
+        {renderField('component_id')}
+        
+        {/* Then render parent feature selector (only for stories) */}
+        {content.hierarchy_level === 'story' && renderField('parent_feature_id')}
+        
+        {/* Then render all other fields except the ones already rendered */}
+        {fields
+          .filter(field => 
+            field !== 'hierarchy_level' && 
+            field !== 'component_id' && 
+            field !== 'parent_feature_id'
+          )
+          .map((field) => renderField(field))}
       </form>
     </div>
   );
