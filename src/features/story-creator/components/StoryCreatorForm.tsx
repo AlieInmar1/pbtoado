@@ -80,7 +80,6 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
               <option value="epic">Epic</option>
               <option value="feature">Feature</option>
               <option value="story">Story</option>
-              <option value="task">Task</option>
             </select>
             <p className="mt-1 text-xs text-gray-500">
               Select the hierarchy level for this item
@@ -88,9 +87,32 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
           </div>
         );
         
+      case 'component_id':
+        return (
+          <div key={field} className="mb-4">
+            <label htmlFor={field} className="block text-sm font-medium text-gray-700">
+              Component {isRequired && <span className="text-red-500">*</span>}
+            </label>
+            <select
+              id={field}
+              value={value || ''}
+              onChange={(e) => handleInputChange(field, e.target.value)}
+              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
+              required={isRequired}
+            >
+              <option value="">Select a component</option>
+              {components.map(component => (
+                <option key={component.id} value={component.productboard_id}>
+                  {component.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        );
+        
       case 'parent_feature_id':
-        // Only show for stories or tasks
-        if (content.hierarchy_level === 'story' || content.hierarchy_level === 'task') {
+        // Only show for stories
+        if (content.hierarchy_level === 'story') {
           return (
             <div key={field} className="mb-4">
               <label htmlFor={field} className="block text-sm font-medium text-gray-700">
@@ -111,33 +133,6 @@ const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
                       {feature.name}
                     </option>
                   ))}
-              </select>
-            </div>
-          );
-        }
-        return null;
-        
-      case 'component_id':
-        // Only show for epics and features
-        if (content.hierarchy_level === 'epic' || content.hierarchy_level === 'feature') {
-          return (
-            <div key={field} className="mb-4">
-              <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-                Component {isRequired && <span className="text-red-500">*</span>}
-              </label>
-              <select
-                id={field}
-                value={value || ''}
-                onChange={(e) => handleInputChange(field, e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                required={isRequired}
-              >
-                <option value="">Select a component</option>
-                {components.map(component => (
-                  <option key={component.id} value={component.productboard_id}>
-                    {component.name}
-                  </option>
-                ))}
               </select>
             </div>
           );

@@ -49,20 +49,16 @@ The Story Creator is a sophisticated tool designed to streamline the process of 
 The Story Creator supports the following hierarchy levels:
 
 1. **Epic**: Highest level items that represent major initiatives or themes
-   - Requires: Component association
    - Example: "Mobile App Redesign"
 
 2. **Feature**: Significant functionality that delivers value to users
-   - Requires: Component association
    - Example: "User Authentication System"
 
 3. **Story**: Specific user-focused functionality that is part of a feature
    - Requires: Parent feature association
    - Example: "As a user, I want to reset my password"
 
-4. **Task**: Smallest unit of work, typically technical in nature
-   - Requires: Parent feature association
-   - Example: "Implement password reset email template"
+All hierarchy levels can be associated with a component, which helps organize items within the product structure. Stories additionally require a parent feature to establish the proper hierarchical relationship.
 
 ### Managing Templates
 

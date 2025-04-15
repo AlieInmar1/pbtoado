@@ -145,15 +145,12 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
         // Get the hierarchy level from the content
         const hierarchyLevel = storyContent.hierarchy_level || 'feature';
         
-        // Determine parent-child relationships based on hierarchy level
-        let parentStoryId = null;
-        let componentId = null;
+        // Get component ID for all hierarchy levels
+        const componentId = storyContent.component_id || null;
         
-        if (hierarchyLevel === 'epic' || hierarchyLevel === 'feature') {
-          // Epics and features are associated with components
-          componentId = storyContent.component_id || null;
-        } else {
-          // Stories and tasks are associated with parent features
+        // Only stories have parent features
+        let parentStoryId = null;
+        if (hierarchyLevel === 'story') {
           parentStoryId = storyContent.parent_feature_id || null;
         }
         
