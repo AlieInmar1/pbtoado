@@ -57,9 +57,10 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
       description: '',
       acceptance_criteria: [],
       parent_feature_id: '',
-      component_id: ''
+      component_id: '',
+      hierarchy_level: 'feature'
     },
-    required_fields: ['title'],
+    required_fields: ['title', 'hierarchy_level'],
     suggested_acceptance_criteria: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -141,8 +142,20 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
     try {
       // For freehand stories, we create directly in the database
       if (isFreehand) {
-        // Determine if this is a feature or a story based on whether parent_feature_id is set
-        const isFeature = !storyContent.parent_feature_id;
+        // Get the hierarchy level from the content
+        const hierarchyLevel = storyContent.hierarchy_level || 'feature';
+        
+        // Determine parent-child relationships based on hierarchy level
+        let parentStoryId = null;
+        let componentId = null;
+        
+        if (hierarchyLevel === 'epic' || hierarchyLevel === 'feature') {
+          // Epics and features are associated with components
+          componentId = storyContent.component_id || null;
+        } else {
+          // Stories and tasks are associated with parent features
+          parentStoryId = storyContent.parent_feature_id || null;
+        }
         
         const { data, error: dbError } = await supabase
           .from('grooming_stories')
@@ -150,12 +163,12 @@ const StoryCreatorWizard: React.FC<StoryCreatorWizardProps> = ({
             title: storyContent.title,
             description: storyContent.description || '',
             acceptance_criteria: storyContent.acceptance_criteria || [],
-            parent_story_id: isFeature ? null : storyContent.parent_feature_id,
-            component_id: isFeature ? storyContent.component_id : null,
+            parent_story_id: parentStoryId,
+            component_id: componentId,
             workspace_id: currentWorkspace.id,
             status: 'new',
             complexity: storyContent.complexity || 1,
-            story_type: isFeature ? 'feature' : 'story'
+            story_type: hierarchyLevel // Use the hierarchy level as the story type
           }])
           .select()
           .single();

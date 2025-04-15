@@ -35,13 +35,34 @@ The Story Creator is a sophisticated tool designed to streamline the process of 
    - **Freehand Story**: Create a story from scratch with full creative freedom
    - **Template-Based Story**: Select an appropriate template for your story type
 4. Fill in the required fields and any additional information:
-   - For stories, select the parent feature it belongs to
-   - For features, select the component it belongs to
+   - **Select the hierarchy level** (Epic, Feature, Story, or Task)
+   - For Epics and Features, select the component they belong to
+   - For Stories and Tasks, select the parent feature they belong to
    - Use the "Quick Idea Entry" box to quickly transform your ideas into structured stories
 5. Click "Get AI Suggestions" to receive AI-powered recommendations
 6. Apply any suggestions you find helpful
 7. Review your story in the preview step
 8. Submit the story to create it in the system
+
+### Hierarchy Levels
+
+The Story Creator supports the following hierarchy levels:
+
+1. **Epic**: Highest level items that represent major initiatives or themes
+   - Requires: Component association
+   - Example: "Mobile App Redesign"
+
+2. **Feature**: Significant functionality that delivers value to users
+   - Requires: Component association
+   - Example: "User Authentication System"
+
+3. **Story**: Specific user-focused functionality that is part of a feature
+   - Requires: Parent feature association
+   - Example: "As a user, I want to reset my password"
+
+4. **Task**: Smallest unit of work, typically technical in nature
+   - Requires: Parent feature association
+   - Example: "Implement password reset email template"
 
 ### Managing Templates
 
