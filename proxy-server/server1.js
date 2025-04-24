@@ -23,7 +23,7 @@ if (fs.existsSync(rootEnvPath)) {
 }
 
 // 2. Load (and potentially override) from pb-connect/.env (for PRODUCTBOARD_API_KEY)
-const pbConnectEnvPath = path.resolve(__dirname, './lib/pb-connect/.env');
+const pbConnectEnvPath = path.resolve(__dirname, '../core/pb-connect/.env');
 if (fs.existsSync(pbConnectEnvPath)) {
   console.log('Loading ProductBoard environment variables from:', pbConnectEnvPath);
   // Use override: false if you want root .env to take precedence if keys conflict
@@ -34,7 +34,7 @@ if (fs.existsSync(pbConnectEnvPath)) {
 
 
 // Import pb-connect module
-const pbConnect = require('./lib/pb-connect');
+const pbConnect = require('../core/pb-connect');
 
 // --- Initialize Clients ---
 const supabaseUrl = process.env.SUPABASE_URL;
