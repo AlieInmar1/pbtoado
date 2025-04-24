@@ -52,7 +52,8 @@ const apifyClient = new ApifyClient({ token: apifyToken }); // Re-enabled ApifyC
 console.log('Supabase and Apify clients initialized.'); // Updated log
 
 const app = express();
-const PORT = 3008;
+// Use Render's PORT environment variable, falling back to 3008 for local dev
+const PORT = process.env.PORT || 3008;
 
 // Enable CORS for all routes
 app.use(cors());
