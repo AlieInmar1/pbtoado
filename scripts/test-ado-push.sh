@@ -1,0 +1,84 @@
+#!/bin/bash
+# Test script for pushing to Azure DevOps directly via curl
+# Usage: bash scripts/test-ado-push.sh
+
+# Load environment variables using better method
+if [ -f .env ]; then
+  set -o allexport
+  source .env
+  set +o allexport
+fi
+
+# Check for required environment variables
+if [ -z "$ADO_ORG" ] || [ -z "$ADO_PROJECT" ] || [ -z "$ADO_PAT" ]; then
+  echo "Error: Required environment variables are missing."
+  echo "Please ensure ADO_ORG, ADO_PROJECT, and ADO_PAT are set in your .env file."
+  exit 1
+fi
+
+# Create a unique ID for the test
+TEST_ID=$(date +%s)
+
+# Encode ADO PAT for basic auth
+ADO_AUTH=$(echo -n ":$ADO_PAT" | base64)
+
+# Work item type - using User Story for test
+WORK_ITEM_TYPE="User%20Story"
+
+# Project name - using Healthcare POC 1 for test
+PROJECT_NAME="Healthcare POC 1"
+
+# Format ADO API URL with URL-encoded project name
+ADO_API_URL="https://dev.azure.com/$ADO_ORG/$(echo $PROJECT_NAME | sed 's/ /%20/g')/_apis/wit/workitems/\$${WORK_ITEM_TYPE}?api-version=6.0"
+
+echo "Sending work item creation request to ADO..."
+echo "API URL: $ADO_API_URL"
+
+# Execute the curl command
+curl -X POST "$ADO_API_URL" \
+  -H "Content-Type: application/json-patch+json" \
+  -H "Authorization: Basic $ADO_AUTH" \
+  -d '[
+    {
+      "op": "add",
+      "path": "/fields/System.Title",
+      "value": "Test Feature from ProductBoard (curl) #'"$TEST_ID"'"
+    },
+    {
+      "op": "add",
+      "path": "/fields/System.AreaPath",
+      "value": "'"$PROJECT_NAME"'"
+    },
+    {
+      "op": "add",
+      "path": "/fields/System.Description",
+      "value": "<div>This is a test feature created via curl command</div><div><h3>Customer Need:</h3>As a user, I want to be able to view my health data in a dashboard</div><div><h3>ProductBoard Link:</h3><a href=\"https://productboard.com/feature/test-'"$TEST_ID"'\">ProductBoard Feature test-'"$TEST_ID"'</a></div>"
+    },
+    {
+      "op": "add",
+      "path": "/fields/Microsoft.VSTS.Common.AcceptanceCriteria",
+      "value": "Acceptance Criteria:\n- Criterion 1\n- Criterion 2\n- Criterion 3"
+    },
+    {
+      "op": "add",
+      "path": "/fields/System.State",
+      "value": "New"
+    },
+    {
+      "op": "add",
+      "path": "/fields/Microsoft.VSTS.Scheduling.StoryPoints",
+      "value": 5
+    },
+    {
+      "op": "add",
+      "path": "/fields/Microsoft.VSTS.Common.BusinessValue",
+      "value": 2
+    },
+    {
+      "op": "add",
+      "path": "/fields/System.Tags",
+      "value": "ProductBoard:test-'"$TEST_ID"'; PB-Component:comp-123; PB-Product:prod-456; GrowthDriver; Investment:Growth"
+    }
+  ]'
+
+echo "Test completed."

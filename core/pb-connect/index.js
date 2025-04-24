@@ -7,7 +7,7 @@ const sync = require('./lib/sync');
 require('dotenv').config();
 
 // Default board ID if not provided in arguments
-const DEFAULT_BOARD_ID = 'default';
+const DEFAULT_BOARD_ID = '00000000-0000-0000-0000-000000000000';
 
 /**
  * Parse command line arguments
@@ -57,7 +57,7 @@ Usage: node index.js [options]
 
 Options:
   -w, --workspace <id>     ProductBoard workspace ID (defaults to PRODUCTBOARD_WORKSPACE_ID env var)
-  -b, --board <id>         ProductBoard board ID (defaults to 'default')
+  -b, --board <id>         ProductBoard board ID (defaults to '00000000-0000-0000-0000-000000000000')
   -r, --reset              Clear all data before syncing (prevents duplicates)
   --reset-tables <tables>  Clear specific tables, comma-separated (e.g. "features,initiatives")
   -h, --help               Show this help message
@@ -151,11 +151,20 @@ async function main() {
           console.log(`  - Inserted: ${result.detailedStats.features.inserted || 0}`);
           console.log(`  - Updated: ${result.detailedStats.features.updated || 0}`);
         }
+        
+        // Components
+        console.log('\n🧩 Components:');
+        console.log(`  - Total: ${result.stats.components_count}`);
+        if (result.detailedStats.components) {
+          console.log(`  - Inserted: ${result.detailedStats.components.inserted || 0}`);
+          console.log(`  - Updated: ${result.detailedStats.components.updated || 0}`);
+        }
       } else {
         // Fallback to simple stats if detailed stats aren't available
         console.log(`- Initiatives: ${result.stats.initiatives_count}`);
         console.log(`- Objectives: ${result.stats.objectives_count}`);
         console.log(`- Features: ${result.stats.features_count}`);
+        console.log(`- Components: ${result.stats.components_count}`);
       }
     } else {
       console.error('\n❌ Sync failed:', result.error);
@@ -173,5 +182,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  main
+  main,
+  syncProductBoardData: sync.syncProductBoardData
 };

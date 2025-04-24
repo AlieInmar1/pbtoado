@@ -436,14 +436,98 @@ async function fetchComponents() {
   }
 }
 
+/**
+ * Fetch all products from ProductBoard with pagination
+ * @returns {Promise<Array>} - Array of products
+ */
+async function fetchProducts() {
+  try {
+    const products = [];
+    let nextPage = null;
+    let page = 1;
+    
+    // Continue fetching until there are no more pages
+    do {
+      console.log(`Fetching products page ${page}...`);
+      
+      // Construct URL with pagination
+      let url = '/products';
+      if (nextPage) {
+        url = nextPage;
+      }
+      
+      const response = await pbApi.get(url);
+      
+      // Add retrieved products to our array
+      if (response.data && response.data.data) {
+        products.push(...response.data.data);
+      }
+      
+      // Check if there's a next page link in the response
+      nextPage = null;
+      if (response.data && response.data.links && response.data.links.next) {
+        nextPage = response.data.links.next;
+        page++;
+      }
+    } while (nextPage);
+    
+    console.log(`Fetched ${products.length} products`);
+    return products;
+  } catch (error) {
+    console.error('Error fetching products:', error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Extract users who are owners of features
+ * @param {Array} features - Array of features from which to extract users
+ * @returns {Promise<Array>} - Array of unique users
+ */
+async function extractUsersFromFeatures(features) {
+  try {
+    console.log('Extracting users from features...');
+    
+    // Create a map to store unique users by email
+    const userMap = new Map();
+    
+    features.forEach(feature => {
+      if (feature.owner && feature.owner.email) {
+        // Only add if not already in the map
+        if (!userMap.has(feature.owner.email)) {
+          userMap.set(feature.owner.email, {
+            email: feature.owner.email,
+            name: feature.owner.name || feature.owner.email.split('@')[0],
+            role: feature.owner.role || 'User'
+          });
+        }
+      }
+    });
+    
+    // Convert map to array
+    const users = Array.from(userMap.values());
+    console.log(`Extracted ${users.length} unique users from features`);
+    return users;
+  } catch (error) {
+    console.error('Error extracting users from features:', error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   fetchInitiatives,
   fetchObjectives,
   fetchFeatures,
   fetchComponents,
+  fetchProducts,
   fetchInitiativeObjectives,
   fetchObjectiveInitiatives,
   fetchInitiativeFeatures,
   fetchObjectiveFeatures,
+  extractUsersFromFeatures,
   retryWithBackoff
 };

@@ -1,0 +1,9 @@
+{
+  "imports": {
+    "express": "npm:express",
+    "cors": "npm:cors",
+    "dotenv": "npm:dotenv",
+    "puppeteer": "npm:puppeteer",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js"
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "title": "Productboard UI Linker Input",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "pbStoryUrl": {
+      "title": "Productboard Story URL",
+      "type": "string",
+      "description": "URL of the Productboard story/feature page",
+      "editor": "textfield"
+    },
+    "adoProjectName": {
+      "title": "Azure DevOps Project Name",
+      "type": "string",
+      "description": "The exact name of the ADO project",
+      "editor": "textfield"
+    },
+    "adoStoryId": {
+      "title": "Azure DevOps Story ID",
+      "type": "string",
+      "description": "The ID of the ADO work item to link",
+      "editor": "textfield"
+    },
+    "pbCookies": {
+      "title": "Productboard Cookies",
+      "type": "array",
+      "description": "Array of cookie objects for Productboard authentication",
+      "editor": "json"
+    },
+    "pbLocalStorage": {
+      "title": "Productboard Local Storage",
+      "type": "object",
+      "description": "Key-value pairs for Productboard local storage",
+      "editor": "json",
+      "nullable": true
+    }
+  },
+  "required": ["pbStoryUrl", "adoProjectName", "adoStoryId", "pbCookies"]
+}

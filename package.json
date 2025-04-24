@@ -9,7 +9,10 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "check-db": "node src/check-db-tables.js",
+    "populate-db": "node src/populate-sample-data.js",
+    "deploy-story-ai": "./scripts/deploy-story-ai-function.sh"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.0",
@@ -36,12 +39,13 @@
     "lucide-react": "^0.358.0",
     "node-fetch": "^3.3.2",
     "playwright": "^1.51.1",
-    "puppeteer": "^24.6.0",
     "react": "^18.3.1",
+    "react-beautiful-dnd": "^13.1.1",
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.51.0",
     "react-markdown": "^10.1.0",
     "react-router-dom": "^6.22.3",
+    "recharts": "^2.15.2",
     "sonner": "^1.4.3",
     "tailwind-merge": "^2.6.0",
     "tesseract.js": "^6.0.0",
@@ -51,11 +55,13 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
+    "@replayio/playwright": "^4.0.0",
     "@testing-library/jest-dom": "^6.4.2",
     "@testing-library/react": "^14.2.1",
     "@testing-library/user-event": "^14.5.2",
     "@types/node": "^20.11.25",
     "@types/react": "^18.3.5",
+    "@types/react-beautiful-dnd": "^13.1.8",
     "@types/react-dom": "^18.3.0",
     "@types/uuid": "^9.0.8",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
@@ -69,6 +75,7 @@
     "globals": "^15.9.0",
     "jsdom": "^24.0.0",
     "postcss": "^8.4.35",
+    "puppeteer": "^24.6.1",
     "tailwindcss": "^3.4.1",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.5.3",

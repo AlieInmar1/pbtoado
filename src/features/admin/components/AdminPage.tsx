@@ -5,8 +5,11 @@ import { Button } from '../../../components/ui/shadcn/button';
 import { Input } from '../../../components/ui/shadcn/input';
 import { ConnectionStatus, ConnectionInfo } from '../../../components/admin/ConnectionStatus';
 import AzureDevOpsSyncButton from '../../../components/admin/AzureDevOpsSyncButton';
+import ProductBoardSyncButton from '../../../components/admin/ProductBoardSyncButton';
+import ProductBoardTokenButton from '../../../components/admin/ProductBoardTokenButton';
 import WorkItemTester from '../../../components/admin/WorkItemTester';
-import { RefreshCw, Save, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Save, AlertTriangle, Link as LinkIcon } from 'lucide-react'; // Added LinkIcon
+import { Link } from 'react-router-dom'; // Import Link for navigation
 
 // Mock data for connections
 const MOCK_CONNECTIONS: ConnectionInfo[] = [
@@ -80,11 +83,13 @@ export const AdminPage: React.FC = () => {
       
       {/* Settings Tabs */}
       <Tabs defaultValue="productboard" className="w-full">
-        <TabsList className="grid grid-cols-4 mb-4">
+        <TabsList className="grid grid-cols-5 mb-4">
           <TabsTrigger value="productboard">ProductBoard</TabsTrigger>
           <TabsTrigger value="azuredevops">Azure DevOps</TabsTrigger>
           <TabsTrigger value="sync">Sync Settings</TabsTrigger>
           <TabsTrigger value="mapping">Mapping</TabsTrigger>
+          <TabsTrigger value="system">System Config</TabsTrigger>
+          <TabsTrigger value="pb-ado-link">PB-ADO Linker</TabsTrigger> {/* Added new tab trigger */}
         </TabsList>
         
         {/* ProductBoard Settings */}
@@ -97,30 +102,43 @@ export const AdminPage: React.FC = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">API Key</label>
-                <Input
-                  type="password"
-                  placeholder="Enter ProductBoard API Key"
-                  value={pbApiKey}
-                  onChange={(e) => setPbApiKey(e.target.value)}
-                />
-                <p className="text-xs text-gray-500">
-                  You can find your API key in the ProductBoard Developer Settings.
+              <div className="p-4 bg-blue-50 rounded-md border border-blue-100">
+                <p className="text-sm text-blue-700">
+                  <strong>API Configuration:</strong> ProductBoard API is configured and ready to use.
                 </p>
               </div>
               
-              <div className="space-y-2">
-                <label className="text-sm font-medium">API URL</label>
-                <Input
-                  type="text"
-                  placeholder="Enter ProductBoard API URL"
-                  value={pbApiUrl}
-                  onChange={(e) => setPbApiUrl(e.target.value)}
+              <div className="mt-6 border-t pt-4">
+                <h3 className="text-lg font-medium mb-2">Authentication Token</h3>
+                <p className="text-sm text-gray-500 mb-4">
+                  Capture and store ProductBoard authentication token for UI automation. This token is required 
+                  for the integration to add Azure DevOps work item links back to ProductBoard features.
+                </p>
+                <div className="mb-4">
+                  <ProductBoardTokenButton 
+                    onCaptureComplete={(result: { success: boolean; message: string }) => {
+                      console.log('ProductBoard token capture result:', result);
+                      // In a real implementation, you might want to refresh the connection status or show a notification
+                    }}
+                  />
+                </div>
+              </div>
+              
+              <div className="mt-6 border-t pt-4">
+                <h3 className="text-lg font-medium mb-2">Data Synchronization</h3>
+                <p className="text-sm text-gray-500 mb-4">
+                  Manually sync ProductBoard data to the local database. This will fetch all initiatives, 
+                  features, objectives, and components from ProductBoard and store them in the database.
+                </p>
+                <ProductBoardSyncButton 
+                  onSyncComplete={(result) => {
+                    console.log('ProductBoard sync completed:', result);
+                    // In a real implementation, you might want to refresh the connection status or show a notification
+                  }}
                 />
               </div>
               
-              <div className="flex justify-end">
+              <div className="flex justify-end mt-4">
                 <Button 
                   onClick={() => handleSaveSettings('productboard')}
                   className="flex items-center"
@@ -143,37 +161,16 @@ export const AdminPage: React.FC = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Personal Access Token</label>
-                <Input
-                  type="password"
-                  placeholder="Enter Azure DevOps PAT"
-                  value={adoToken}
-                  onChange={(e) => setAdoToken(e.target.value)}
-                />
-                <p className="text-xs text-gray-500">
-                  Generate a PAT with appropriate permissions in your Azure DevOps settings.
+              <div className="p-4 bg-blue-50 rounded-md border border-blue-100">
+                <p className="text-sm text-blue-700">
+                  <strong>API Configuration:</strong> Azure DevOps API is configured and ready to use.
                 </p>
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Organization</label>
-                <Input
-                  type="text"
-                  placeholder="Enter Azure DevOps Organization"
-                  value={adoOrg}
-                  onChange={(e) => setAdoOrg(e.target.value)}
-                />
-              </div>
-              
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Project</label>
-                <Input
-                  type="text"
-                  placeholder="Enter Azure DevOps Project"
-                  value={adoProject}
-                  onChange={(e) => setAdoProject(e.target.value)}
-                />
+                <p className="text-sm text-blue-700 mt-2">
+                  <strong>Organization:</strong> Inmar
+                </p>
+                <p className="text-sm text-blue-700">
+                  <strong>Project:</strong> Healthcare
+                </p>
               </div>
               
               <div className="mt-6 border-t pt-4">
@@ -293,80 +290,158 @@ export const AdminPage: React.FC = () => {
             </CardContent>
           </Card>
         </TabsContent>
+        
+        {/* System Configuration Settings */}
+        <TabsContent value="system">
+          <Card>
+            <CardHeader>
+              <CardTitle>System Configuration</CardTitle>
+              <CardDescription>
+                Manage application-wide configuration settings, API keys, and environment variables.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-gray-500">
+                System configuration allows you to securely store and manage sensitive configuration 
+                values like API keys, tokens, and application settings. These values are stored in the 
+                database and can be accessed by the application as needed.
+              </p>
+              
+              <div className="p-4 bg-yellow-50 rounded-md border border-yellow-100 mb-4">
+                <p className="text-sm text-yellow-700 flex items-start">
+                  <AlertTriangle className="h-5 w-5 mr-2 shrink-0" />
+                  <span>Managing configuration here allows secure storage of sensitive API keys and tokens. 
+                  Be careful when editing these values, as incorrect configuration may disrupt application functionality.</span>
+                </p>
+              </div>
+              
+              <div className="flex justify-end">
+                <Button 
+                  variant="default"
+                  onClick={() => window.location.href = '/admin/system-config'}
+                  className="flex items-center"
+                >
+                  Manage System Configuration
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* PB-ADO Linker Tab */}
+        <TabsContent value="pb-ado-link">
+          <Card>
+            <CardHeader>
+              <CardTitle>ProductBoard to ADO Linker (UI Automation)</CardTitle>
+              <CardDescription>
+                Manually trigger the UI automation to link a specific ProductBoard item to an ADO work item.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-500 mb-4">
+                This tool uses the captured ProductBoard session token to automate the linking process directly in the ProductBoard interface.
+                Ensure a valid session token has been captured recently.
+              </p>
+              <Link to="/admin/pb-ado-linker">
+                <Button variant="outline" className="flex items-center">
+                  <LinkIcon className="h-4 w-4 mr-2" />
+                  Go to PB-ADO Linker Tool
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
       </Tabs>
       
-      {/* System Health */}
+      {/* Mapping Results */}
       <Card>
         <CardHeader>
-          <CardTitle>System Health</CardTitle>
+          <CardTitle>Hierarchy Mapping Results</CardTitle>
           <CardDescription>
-            Overview of system performance and recent sync operations.
+            View and analyze the mapping between ProductBoard and Azure DevOps items.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
+            <p className="text-sm text-gray-500">
+              The mapping results page shows how ProductBoard items (Initiatives, Features, Sub-features) 
+              map to Azure DevOps work items (Epics, Features, User Stories) based on your configured mappings.
+              You can view matches, mismatches, and items that exist in only one system.
+            </p>
+            
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-green-50 p-4 rounded-md border border-green-100">
-                <div className="text-sm text-gray-500">API Requests (24h)</div>
-                <div className="text-2xl font-semibold">1,245</div>
-              </div>
-              
-              <div className="bg-blue-50 p-4 rounded-md border border-blue-100">
-                <div className="text-sm text-gray-500">Items Synced (24h)</div>
-                <div className="text-2xl font-semibold">305</div>
+                <div className="text-sm text-gray-500">Full Matches</div>
+                <div className="text-2xl font-semibold" id="full-matches-count">-</div>
               </div>
               
               <div className="bg-yellow-50 p-4 rounded-md border border-yellow-100">
-                <div className="text-sm text-gray-500">Sync Errors (24h)</div>
-                <div className="text-2xl font-semibold">2</div>
+                <div className="text-sm text-gray-500">Partial Matches</div>
+                <div className="text-2xl font-semibold" id="partial-matches-count">-</div>
+              </div>
+              
+              <div className="bg-red-50 p-4 rounded-md border border-red-100">
+                <div className="text-sm text-gray-500">No Matches</div>
+                <div className="text-2xl font-semibold" id="no-matches-count">-</div>
               </div>
             </div>
             
-            <div>
-              <h3 className="text-lg font-medium mb-2">Recent Sync Operations</h3>
-              <div className="border rounded-md overflow-hidden">
-                <table className="min-w-full divide-y divide-gray-200">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Items</th>
-                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
-                    </tr>
-                  </thead>
-                  <tbody className="bg-white divide-y divide-gray-200">
-                    {MOCK_SYNC_HISTORY.map((sync) => (
-                      <tr key={sync.id}>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {sync.timestamp.toLocaleString()}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {sync.status === 'success' ? (
-                            <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
-                              Success
-                            </span>
-                          ) : (
-                            <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-red-100 text-red-800">
-                              Error
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {sync.itemsProcessed}
-                        </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                          {sync.error && (
-                            <div className="flex items-center text-red-600">
-                              <AlertTriangle className="h-4 w-4 mr-1" />
-                              {sync.error}
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="bg-blue-50 p-4 rounded-md border border-blue-100">
+                <h3 className="text-md font-medium mb-2 text-blue-800">ProductBoard Items</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-sm text-gray-500">Initiatives</div>
+                    <div className="text-lg font-semibold" id="pb-initiatives-count">-</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">Features</div>
+                    <div className="text-lg font-semibold" id="pb-features-count">-</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">Sub-features</div>
+                    <div className="text-lg font-semibold" id="pb-subfeatures-count">-</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">Total</div>
+                    <div className="text-lg font-semibold" id="pb-total-count">-</div>
+                  </div>
+                </div>
               </div>
+              
+              <div className="bg-purple-50 p-4 rounded-md border border-purple-100">
+                <h3 className="text-md font-medium mb-2 text-purple-800">Azure DevOps Items</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-sm text-gray-500">Epics</div>
+                    <div className="text-lg font-semibold" id="ado-epics-count">-</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">Features</div>
+                    <div className="text-lg font-semibold" id="ado-features-count">-</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">User Stories</div>
+                    <div className="text-lg font-semibold" id="ado-stories-count">-</div>
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-500">Total</div>
+                    <div className="text-lg font-semibold" id="ado-total-count">-</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="flex justify-center mt-4">
+              <Button 
+                variant="default"
+                onClick={() => window.location.href = '/admin/mapping-results'}
+                className="flex items-center"
+                size="lg"
+              >
+                View Detailed Mapping Results
+              </Button>
             </div>
           </div>
         </CardContent>

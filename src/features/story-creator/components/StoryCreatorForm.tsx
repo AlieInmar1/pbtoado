@@ -1,509 +1,371 @@
 import React, { useState, useEffect } from 'react';
-import { StoryTemplate, StoryContent } from '../../../types/story-creator';
-import { useFeatures } from '../../../hooks/useFeatures';
-import { useComponents } from '../../../hooks/useComponents';
+import { Story, TeamReference, UserReference, ProductReference } from '../../../types/story-creator';
+import { MainInfoSection } from './sections/MainInfoSection';
+import { RICEScoringSection } from './sections/RICEScoringSection';
+import { ClassificationSection } from './sections/ClassificationSection';
+import { PlanningSection } from './sections/PlanningSection';
+import { DetailedContentSection } from './sections/DetailedContentSection';
+import { pushStoryToProductBoard } from '../../../lib/api/productBoardService';
+import { supabase } from '../../../lib/supabase';
 
 interface StoryCreatorFormProps {
-  template: StoryTemplate | null;
-  content: StoryContent | null;
-  onChange: (field: string, value: any) => void;
-  onAnalyze: () => void;
-  isAnalyzing: boolean;
+  initialStory?: Partial<Story>;
+  onSave: (story: Story) => void;
+  onCancel?: () => void;
 }
 
-const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
-  template,
-  content,
-  onChange,
-  onAnalyze,
-  isAnalyzing
+/**
+ * StoryCreatorForm is the main form component for creating or editing stories
+ * with full ProductBoard field integration.
+ * 
+ * It provides a tabbed interface to organize the many input fields into logical sections.
+ */
+export const StoryCreatorForm: React.FC<StoryCreatorFormProps> = ({
+  initialStory,
+  onSave,
+  onCancel
 }) => {
-  if (!template || !content) {
+  // Component state
+  const [activeTab, setActiveTab] = useState<string>('main');
+  const [story, setStory] = useState<Partial<Story>>(initialStory || {
+    // Default values for a new story
+    reach_score: 20, // Using standardized scoring with 20-point increments
+    impact_score: 20, // Using standardized scoring with 20-point increments
+    confidence_score: 40, // Using standardized scoring with 20-point increments
+    effort_score: 0.5, // Starting with minimum person-months
+    os_compatibility: 40, // Using standardized scoring with 20-point increments
+    teams: [],
+    tags: [],
+    dependencies: [],
+    product_line: [],
+    products: []
+  });
+  
+  // Data sources
+  const [users, setUsers] = useState<UserReference[]>([]);
+  const [teams, setTeams] = useState<TeamReference[]>([]);
+  const [products, setProducts] = useState<ProductReference[]>([]);
+  const [allStories, setAllStories] = useState<Partial<Story>[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  
+  // Fetch data on component mount
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        // Fetch users
+        const { data: usersData, error: usersError } = await supabase
+          .from('users')
+          .select('id, name');
+        
+        if (usersError) throw usersError;
+        setUsers(usersData || []);
+        
+        // Fetch teams
+        const { data: teamsData, error: teamsError } = await supabase
+          .from('teams')
+          .select('id, name');
+        
+        if (teamsError) throw teamsError;
+        setTeams(teamsData || []);
+        
+        // Fetch products
+        const { data: productsData, error: productsError } = await supabase
+          .from('products')
+          .select('id, name');
+        
+        if (productsError) throw productsError;
+        setProducts(productsData || []);
+        
+        // Fetch all stories (for dependencies)
+        const { data: storiesData, error: storiesError } = await supabase
+          .from('stories')
+          .select('id, title');
+        
+        if (storiesError) throw storiesError;
+        setAllStories(storiesData || []);
+        
+      } catch (error) {
+        console.error('Error fetching data:', error);
+        setError('Failed to load required data. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchData();
+  }, []);
+  
+  // Field change handler
+  const handleFieldChange = (field: keyof Story, value: any) => {
+    setStory(prev => ({ ...prev, [field]: value }));
+  };
+  
+  // Form submission handler
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Validate required fields
+    if (!story.title || !story.description) {
+      setActiveTab('main');
+      setError('Title and description are required');
+      return;
+    }
+    
+    setIsSaving(true);
+    setError(null);
+    
+    try {
+      // Save story to database
+      let result: Story;
+      
+      if (story.id) {
+        // Update existing story
+        const { data, error } = await supabase
+          .from('stories')
+          .update({
+            ...story,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', story.id)
+          .select()
+          .single();
+        
+        if (error) throw error;
+        result = data as Story;
+      } else {
+        // Create new story
+        const { data, error } = await supabase
+          .from('stories')
+          .insert({
+            ...story,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+          .select()
+          .single();
+        
+        if (error) throw error;
+        result = data as Story;
+      }
+      
+      // Sync with ProductBoard if needed
+      if (story.sync_with_productboard) {
+        try {
+          const pbResult = await pushStoryToProductBoard(result);
+          
+          if (pbResult.success && pbResult.productboardId) {
+            // Update story with ProductBoard ID
+            await supabase
+              .from('stories')
+              .update({
+                productboard_id: pbResult.productboardId,
+                last_synced_at: new Date().toISOString()
+              })
+              .eq('id', result.id);
+              
+            result.productboard_id = pbResult.productboardId;
+            result.last_synced_at = new Date().toISOString();
+          } else {
+            console.error('ProductBoard sync failed:', pbResult.message);
+            setError(`Saved to database but ProductBoard sync failed: ${pbResult.message}`);
+          }
+        } catch (syncError) {
+          console.error('Error syncing with ProductBoard:', syncError);
+          // Continue anyway, we've saved to our DB
+        }
+      }
+      
+      // Call the onSave callback with the saved story
+      onSave(result);
+    } catch (error) {
+      console.error('Error saving story:', error);
+      setError('Failed to save story. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+  
+  // If still loading data, show loading state
+  if (loading) {
     return (
-      <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
-        <p className="text-gray-500">No template selected</p>
+      <div className="flex justify-center items-center h-64">
+        <div className="text-center">
+          <div className="spinner h-8 w-8 border-4 border-blue-500 border-r-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading form data...</p>
+        </div>
       </div>
     );
   }
-
-  const handleInputChange = (field: string, value: any) => {
-    onChange(field, value);
-  };
-
-  // Get features and components
-  const { features, isLoading: featuresLoading } = useFeatures();
-  const { components, isLoading: componentsLoading } = useComponents();
   
-  // State for ideas/problems input and filtered features/components
-  const [ideaInput, setIdeaInput] = useState<string>('');
-  const [filteredFeatures, setFilteredFeatures] = useState<any[]>([]);
-  const [filteredComponents, setFilteredComponents] = useState<any[]>([]);
-  
-  // Filter components that appear as parents in the features table
-  useEffect(() => {
-    if (features.length > 0 && components.length > 0) {
-      // Get unique parent_ids from features
-      const parentIds = new Set(
-        features
-          .filter(feature => feature.parent_id)
-          .map(feature => feature.parent_id)
-      );
-      
-      // Filter components that appear as parents
-      const componentsInFeatures = components.filter(component => 
-        parentIds.has(component.productboard_id)
-      );
-      
-      setFilteredComponents(componentsInFeatures);
-    } else {
-      setFilteredComponents(components);
-    }
-  }, [features, components]);
-  
-  // Filter features based on selected component
-  useEffect(() => {
-    if (content.component_id && features.length > 0) {
-      // Filter features that have the selected component as their parent
-      const filtered = features.filter(feature => 
-        feature.type === 'feature' && 
-        feature.parent_id === content.component_id
-      );
-      setFilteredFeatures(filtered);
-    } else {
-      // If no component is selected, show all features
-      setFilteredFeatures(features.filter(feature => feature.type === 'feature'));
-    }
-  }, [content.component_id, features]);
-  
-  // Function to generate title and description from ideas/problems
-  const generateFromIdea = () => {
-    if (!ideaInput.trim()) return;
-    
-    // Simple transformation for now - in a real implementation, this would use AI
-    const lines = ideaInput.split('\n').filter(line => line.trim());
-    
-    if (lines.length > 0) {
-      // Use first line as title
-      handleInputChange('title', lines[0]);
-      
-      // Use remaining lines as description
-      if (lines.length > 1) {
-        const description = lines.slice(1).join('\n\n');
-        handleInputChange('description', description);
-      }
-    }
-    
-    // Clear the idea input
-    setIdeaInput('');
-  };
-
-  const renderField = (field: string) => {
-    const value = content[field];
-    const isRequired = template.required_fields.includes(field);
-
-    switch (field) {
-      case 'hierarchy_level':
-        return (
-          <div key={field} className="mb-4">
-            <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-              Hierarchy Level {isRequired && <span className="text-red-500">*</span>}
-            </label>
-            <select
-              id={field}
-              value={value || 'feature'}
-              onChange={(e) => handleInputChange(field, e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              required={isRequired}
-            >
-              <option value="epic">Epic</option>
-              <option value="feature">Feature</option>
-              <option value="story">Story</option>
-            </select>
-            <p className="mt-1 text-xs text-gray-500">
-              Select the hierarchy level for this item
-            </p>
-          </div>
-        );
-        
-      case 'component_id':
-        return (
-          <div key={field} className="mb-4">
-            <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-              Component {isRequired && <span className="text-red-500">*</span>}
-            </label>
-            <select
-              id={field}
-              value={value || ''}
-              onChange={(e) => handleInputChange(field, e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              required={isRequired}
-            >
-              <option value="">Select a component</option>
-              {filteredComponents.length > 0 ? (
-                filteredComponents.map(component => (
-                  <option key={component.id} value={component.productboard_id}>
-                    {component.name}
-                  </option>
-                ))
-              ) : (
-                <option value="" disabled>No components found with features</option>
-              )}
-            </select>
-            {filteredComponents.length === 0 && (
-              <p className="mt-1 text-xs text-amber-500">
-                No components found that have features. Please create features for components first.
-              </p>
-            )}
-          </div>
-        );
-        
-      case 'parent_feature_id':
-        // Only show for stories
-        if (content.hierarchy_level === 'story') {
-          return (
-            <div key={field} className="mb-4">
-              <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-                Parent Feature {isRequired && <span className="text-red-500">*</span>}
-              </label>
-              <select
-                id={field}
-                value={value || ''}
-                onChange={(e) => handleInputChange(field, e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                required={isRequired}
-              >
-                <option value="">Select a parent feature</option>
-                {filteredFeatures.length > 0 ? (
-                  filteredFeatures.map(feature => (
-                    <option key={feature.id} value={feature.id}>
-                      {feature.name}
-                    </option>
-                  ))
-                ) : (
-                  <option value="" disabled>
-                    {content.component_id 
-                      ? "No features found for selected component" 
-                      : "Please select a component first"}
-                  </option>
-                )}
-              </select>
-              {content.component_id && filteredFeatures.length === 0 && (
-                <p className="mt-1 text-xs text-amber-500">
-                  No features found for this component. Please create a feature first or select a different component.
-                </p>
-              )}
-              {!content.component_id && (
-                <p className="mt-1 text-xs text-amber-500">
-                  Please select a component to see available features.
-                </p>
-              )}
-            </div>
-          );
-        }
-        return null;
-      case 'title':
-        return (
-          <div key={field} className="mb-4">
-            <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-              Title {isRequired && <span className="text-red-500">*</span>}
-            </label>
-            <input
-              type="text"
-              id={field}
-              value={value || ''}
-              onChange={(e) => handleInputChange(field, e.target.value)}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              required={isRequired}
-            />
-          </div>
-        );
-
-      case 'description':
-        return (
-          <div key={field} className="mb-4">
-            <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-              Description {isRequired && <span className="text-red-500">*</span>}
-            </label>
-            <textarea
-              id={field}
-              value={value || ''}
-              onChange={(e) => handleInputChange(field, e.target.value)}
-              rows={5}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              required={isRequired}
-            />
-            <p className="mt-1 text-xs text-gray-500">
-              Use the format: "As a [user type], I want to [action] so that [benefit]"
-            </p>
-          </div>
-        );
-
-      case 'acceptance_criteria':
-        return (
-          <div key={field} className="mb-4">
-            <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-              Acceptance Criteria {isRequired && <span className="text-red-500">*</span>}
-            </label>
-            <div className="mt-1 border border-gray-300 rounded-md p-2">
-              {Array.isArray(value) && value.length > 0 ? (
-                <ul className="space-y-2">
-                  {value.map((criterion, index) => (
-                    <li key={index} className="flex items-start">
-                      <div className="flex-1">
-                        <textarea
-                          value={criterion}
-                          onChange={(e) => {
-                            const newCriteria = [...value];
-                            newCriteria[index] = e.target.value;
-                            handleInputChange(field, newCriteria);
-                          }}
-                          rows={2}
-                          className="block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                        />
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newCriteria = [...value];
-                          newCriteria.splice(index, 1);
-                          handleInputChange(field, newCriteria);
-                        }}
-                        className="ml-2 text-red-500 hover:text-red-700"
-                      >
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="h-5 w-5"
-                          viewBox="0 0 20 20"
-                          fill="currentColor"
-                        >
-                          <path
-                            fillRule="evenodd"
-                            d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                            clipRule="evenodd"
-                          />
-                        </svg>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-gray-500 text-sm">No acceptance criteria added yet</p>
-              )}
-              <button
-                type="button"
-                onClick={() => {
-                  const newCriteria = Array.isArray(value) ? [...value] : [];
-                  newCriteria.push('Given [context], when [action], then [result]');
-                  handleInputChange(field, newCriteria);
-                }}
-                className="mt-2 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-4 w-4 mr-1"
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M10 5a1 1 0 011 1v3h3a1 1 0 110 2h-3v3a1 1 0 11-2 0v-3H6a1 1 0 110-2h3V6a1 1 0 011-1z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-                Add Criterion
-              </button>
-            </div>
-            <p className="mt-1 text-xs text-gray-500">
-              Use the format: "Given [context], when [action], then [result]"
-            </p>
-          </div>
-        );
-
-      case 'complexity':
-        return (
-          <div key={field} className="mb-4">
-            <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-              Complexity {isRequired && <span className="text-red-500">*</span>}
-            </label>
-            <select
-              id={field}
-              value={value || ''}
-              onChange={(e) => handleInputChange(field, parseInt(e.target.value))}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              required={isRequired}
-            >
-              <option value="">Select complexity</option>
-              <option value="1">1 - Very Simple</option>
-              <option value="2">2 - Simple</option>
-              <option value="3">3 - Moderate</option>
-              <option value="4">4 - Complex</option>
-              <option value="5">5 - Very Complex</option>
-            </select>
-          </div>
-        );
-
-      case 'story_points':
-        return (
-          <div key={field} className="mb-4">
-            <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-              Story Points {isRequired && <span className="text-red-500">*</span>}
-            </label>
-            <select
-              id={field}
-              value={value || ''}
-              onChange={(e) => handleInputChange(field, parseInt(e.target.value))}
-              className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              required={isRequired}
-            >
-              <option value="">Select points</option>
-              <option value="1">1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="5">5</option>
-              <option value="8">8</option>
-              <option value="13">13</option>
-            </select>
-          </div>
-        );
-
-      default:
-        // Handle other fields as text inputs
-        if (typeof value === 'string') {
-          return (
-            <div key={field} className="mb-4">
-              <label htmlFor={field} className="block text-sm font-medium text-gray-700">
-                {field.charAt(0).toUpperCase() + field.slice(1).replace(/_/g, ' ')}{' '}
-                {isRequired && <span className="text-red-500">*</span>}
-              </label>
-              <input
-                type="text"
-                id={field}
-                value={value || ''}
-                onChange={(e) => handleInputChange(field, e.target.value)}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                required={isRequired}
-              />
-            </div>
-          );
-        }
-        return null;
-    }
-  };
-
-  // Get all fields from the template's default content
-  const fields = Object.keys(content).filter(
-    (field) => field !== 'workspace_id'
-  );
-
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-4">
-      <div className="mb-4 flex justify-between items-center">
-        <h3 className="text-lg font-medium text-gray-900">Story Details</h3>
-        <button
-          type="button"
-          onClick={onAnalyze}
-          disabled={isAnalyzing}
-          className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-        >
-          {isAnalyzing ? (
-            <>
-              <svg
-                className="animate-spin -ml-1 mr-2 h-4 w-4 text-white"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              Analyzing...
-            </>
-          ) : (
-            <>
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-4 w-4 mr-1"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              Get AI Suggestions
-            </>
-          )}
-        </button>
+    <form onSubmit={handleSubmit} className="bg-white shadow-md rounded-lg overflow-hidden">
+      {/* Form header with tabs */}
+      <div className="border-b border-gray-200">
+        <div className="px-4 sm:px-6">
+          <nav className="-mb-px flex space-x-6 overflow-x-auto">
+            <button
+              type="button"
+              className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'main'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+              onClick={() => setActiveTab('main')}
+            >
+              Main Information
+            </button>
+            <button
+              type="button"
+              className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'rice'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+              onClick={() => setActiveTab('rice')}
+            >
+              RICE Scoring
+            </button>
+            <button
+              type="button"
+              className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'classification'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+              onClick={() => setActiveTab('classification')}
+            >
+              Classification
+            </button>
+            <button
+              type="button"
+              className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'planning'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+              onClick={() => setActiveTab('planning')}
+            >
+              Planning
+            </button>
+            <button
+              type="button"
+              className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm ${
+                activeTab === 'content'
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+              }`}
+              onClick={() => setActiveTab('content')}
+            >
+              Detailed Content
+            </button>
+          </nav>
+        </div>
       </div>
-
-      {/* Ideas/Problems Input */}
-      <div className="mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
-        <h4 className="text-md font-medium text-blue-800 mb-2">Quick Idea Entry</h4>
-        <p className="text-sm text-blue-600 mb-3">
-          Enter your ideas or problems here, and we'll help format them into a proper story.
-        </p>
-        <textarea
-          value={ideaInput}
-          onChange={(e) => setIdeaInput(e.target.value)}
-          rows={4}
-          placeholder="Type your ideas or problems here... First line will become the title, remaining text will be the description."
-          className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 text-sm"
-        />
-        <button
-          type="button"
-          onClick={generateFromIdea}
-          className="mt-2 inline-flex items-center px-3 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-4 w-4 mr-1"
-            viewBox="0 0 20 20"
-            fill="currentColor"
-          >
-            <path
-              fillRule="evenodd"
-              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-8.707l-3-3a1 1 0 00-1.414 0l-3 3a1 1 0 001.414 1.414L9 9.414V13a1 1 0 102 0V9.414l1.293 1.293a1 1 0 001.414-1.414z"
-              clipRule="evenodd"
+      
+      {/* Form content */}
+      <div className="px-4 py-6 sm:px-6">
+        {error && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-md">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                </svg>
+              </div>
+              <div className="ml-3">
+                <h3 className="text-sm font-medium text-red-800">{error}</h3>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Tab content */}
+        <div className="space-y-6">
+          {activeTab === 'main' && (
+            <MainInfoSection
+              story={story}
+              onChange={handleFieldChange}
+              users={users}
+              teams={teams}
             />
-          </svg>
-          Generate Story
+          )}
+          
+          {activeTab === 'rice' && (
+            <RICEScoringSection
+              story={story}
+              onChange={handleFieldChange}
+            />
+          )}
+          
+          {activeTab === 'classification' && (
+            <ClassificationSection
+              story={story}
+              onChange={handleFieldChange}
+              products={products}
+            />
+          )}
+          
+          {activeTab === 'planning' && (
+            <PlanningSection
+              story={story}
+              onChange={handleFieldChange}
+              allStories={allStories}
+            />
+          )}
+          
+          {activeTab === 'content' && (
+            <DetailedContentSection
+              story={story}
+              onChange={handleFieldChange}
+            />
+          )}
+        </div>
+        
+        {/* Sync with ProductBoard option */}
+        <div className="mt-6 pt-4 border-t border-gray-200">
+          <div className="flex items-center">
+            <input
+              id="sync-with-productboard"
+              type="checkbox"
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+              checked={story.sync_with_productboard || false}
+              onChange={(e) => handleFieldChange('sync_with_productboard', e.target.checked)}
+            />
+            <label htmlFor="sync-with-productboard" className="ml-2 block text-sm text-gray-900">
+              Sync with ProductBoard
+            </label>
+          </div>
+          <p className="mt-1 text-sm text-gray-500">
+            When enabled, this story will be pushed to ProductBoard after saving.
+          </p>
+        </div>
+      </div>
+      
+      {/* Form actions */}
+      <div className="px-4 py-4 sm:px-6 bg-gray-50 border-t border-gray-200 flex justify-end space-x-3">
+        {onCancel && (
+          <button
+            type="button"
+            className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            onClick={onCancel}
+            disabled={isSaving}
+          >
+            Cancel
+          </button>
+        )}
+        <button
+          type="submit"
+          className={`px-4 py-2 rounded-md shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${
+            isSaving ? 'opacity-70 cursor-not-allowed' : ''
+          }`}
+          disabled={isSaving}
+        >
+          {isSaving ? 'Saving...' : story.id ? 'Update Story' : 'Create Story'}
         </button>
       </div>
-
-      <form className="space-y-4">
-        {/* Always render hierarchy level first */}
-        {renderField('hierarchy_level')}
-        
-        {/* Then render component selector */}
-        {renderField('component_id')}
-        
-        {/* Then render parent feature selector (only for stories) */}
-        {content.hierarchy_level === 'story' && renderField('parent_feature_id')}
-        
-        {/* Then render all other fields except the ones already rendered */}
-        {fields
-          .filter(field => 
-            field !== 'hierarchy_level' && 
-            field !== 'component_id' && 
-            field !== 'parent_feature_id'
-          )
-          .map((field) => renderField(field))}
-      </form>
-    </div>
+    </form>
   );
 };
-
-export default StoryCreatorForm;

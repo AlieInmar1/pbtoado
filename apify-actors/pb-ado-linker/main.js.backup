@@ -1,0 +1,1921 @@
+// 
+// main.js - Playwright Version
+import { Actor } from 'apify';
+import { chromium } from 'playwright'; // Import chromium from playwright
+import fs from 'fs'; // Import fs for reading screenshot files
+
+console.log("--- Actor script starting (Playwright Version) ---");
+
+// Helper Function: Inject Local Storage (Playwright version)
+async function injectLocalStorage(context, storage) {
+    if (!storage || typeof storage !== 'object' || Object.keys(storage).length === 0) {
+        console.warn('[PW Actor] No valid local storage data provided to inject.');
+        return;
+    }
+    console.log(`[PW Actor] Injecting ${Object.keys(storage).length} local storage items...`);
+    try {
+        // Inject into the initial context before creating the page
+        await context.addInitScript((storage) => {
+            for (const key in storage) {
+                window.localStorage.setItem(key, storage[key]);
+            }
+            console.log('[PW Actor Eval] Local storage injected via init script.');
+        }, storage);
+        console.log('[PW Actor] Local storage injection setup.');
+    } catch (error) {
+        console.error('[PW Actor] Error setting up local storage injection:', error.message);
+    }
+}
+
+// Helper Function: Inject Cookies (Playwright version)
+async function injectCookies(context, cookies, targetDomain) {
+    if (!cookies || !Array.isArray(cookies)) {
+        console.warn('[PW Actor] No valid cookies provided to inject.');
+        return;
+    }
+    console.log(`[PW Actor] Injecting ${cookies.length} cookies for domain ${targetDomain}...`);
+    try {
+        const playwrightCookies = cookies
+            .filter(cookie => cookie.domain && cookie.domain.includes(targetDomain)) // Filter for the target domain
+            .map(cookie => ({
+                name: cookie.name,
+                value: cookie.value,
+                domain: cookie.domain,
+                path: cookie.path || '/',
+                expires: cookie.expires || cookie.expirationDate || -1,
+                httpOnly: cookie.httpOnly || false,
+                secure: cookie.secure || false,
+                sameSite: cookie.sameSite || 'Lax', // Default to Lax
+            }));
+
+        if (playwrightCookies.length > 0) {
+            await context.addCookies(playwrightCookies);
+            console.log(`[PW Actor] ${playwrightCookies.length} cookies injected successfully.`);
+        } else {
+            console.warn('[PW Actor] No cookies matched the target domain for injection.');
+        }
+    } catch (error) {
+        console.error('[PW Actor] Error injecting cookies:', error.message);
+    }
+}
+
+// Helper function to save screenshot to Key-Value Store
+async function saveScreenshot(page, key) {
+    try {
+        const screenshotBuffer = await page.screenshot();
+        await Actor.setValue(key, screenshotBuffer, { contentType: 'image/png' });
+        console.log(`[PW Actor] Screenshot saved to Key-Value Store with key: ${key}`);
+    } catch (saveError) {
+        console.error(`[PW Actor] Failed to save screenshot with key "${key}": ${saveError.message}`);
+        // Decide if you want to re-throw or just log the error
+    }
+}
+
+// Define the main async function for the actor logic
+async function main() {
+    console.log("--- Entering main function (Playwright Version) ---");
+    // Get input defined in Actor's input schema
+    const input = await Actor.getInput();
+
+    console.log('--- Raw Actor Input Received ---');
+    console.log(JSON.stringify(input, (key, value) => {
+      if (key === 'pbCookies') return `[${value?.length || 0} cookies]`;
+      if (key === 'pbLocalStorage') return `[${value ? Object.keys(value).length : 0} LS items]`;
+      return value;
+    }, 2));
+
+    const {
+        pbStoryUrl,
+        adoProjectName,
+        adoStoryId,
+        pbCookies, // Expecting array of cookie objects
+        pbLocalStorage // Expecting key-value object
+    } = input;
+
+    console.log('--- Actor Input Received ---');
+    console.log(`PB Story URL: ${pbStoryUrl}`);
+    console.log(`ADO Project Name: ${adoProjectName}`);
+    console.log(`ADO Story ID: ${adoStoryId}`);
+    console.log(`PB Cookies Type: ${typeof pbCookies}, Is Array: ${Array.isArray(pbCookies)}, Length: ${Array.isArray(pbCookies) ? pbCookies.length : 'N/A'}`);
+    console.log(`PB Local Storage Type: ${typeof pbLocalStorage}`);
+
+    if (!pbStoryUrl || !adoProjectName || !adoStoryId) {
+        throw new Error('Missing required input: pbStoryUrl, adoProjectName, or adoStoryId.');
+    }
+    if (!pbCookies || !Array.isArray(pbCookies) || pbCookies.length === 0) {
+        throw new Error('Missing or invalid required input: pbCookies must be a non-empty array.');
+    }
+    if (pbLocalStorage && typeof pbLocalStorage !== 'object') {
+        console.warn('pbLocalStorage provided but is not an object. Attempting to proceed without it.');
+        pbLocalStorage = {}; // Default to empty object if invalid type
+    }
+
+    const TIMEOUT = 60000; // 60 seconds
+    let browser = null;
+    let context = null;
+    let page = null;
+    let step = 'Initialization'; // Track current step
+    const targetDomain = 'inmar.productboard.com'; // Domain for cookie injection
+
+    try {
+        step = 'Browser Launch';
+        console.log('Launching browser using chromium.launch (expecting Dockerfile install)...'); // Updated log message
+        // Use chromium.launch directly; Dockerfile should handle installation
+        browser = await chromium.launch({
+            headless: true, // Explicitly set headless
+            args: [ // Add standard sandbox args just in case
+               '--no-sandbox',
+               '--disable-setuid-sandbox',
+               '--disable-dev-shm-usage',
+               '--disable-gpu' // Often needed in containers
+            ]
+            // No executablePath needed - Playwright should find its own installed browser
+        });
+        console.log('Browser launched.');
+
+        step = 'Create Browser Context';
+        context = await browser.newContext({
+            // Set viewport, user agent etc. on the context
+            viewport: { width: 1280, height: 800 },
+            userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36', // Use a recent UA
+            locale: 'en-US',
+            // bypassCSP: true, // Consider if needed
+        });
+        console.log('Browser context created.');
+
+        step = 'Inject Auth';
+        await injectCookies(context, pbCookies, targetDomain);
+        await injectLocalStorage(context, pbLocalStorage || {});
+        console.log('Auth injection setup.');
+
+        step = 'Create Page';
+        page = await context.newPage();
+        console.log('New page created.');
+
+        step = 'Navigate to PB Story';
+        console.log(`Navigating to ${pbStoryUrl}...`);
+        await page.goto(pbStoryUrl, { waitUntil: 'domcontentloaded', timeout: TIMEOUT }); // Reverted to domcontentloaded
+        console.log('Navigation complete.');
+
+        step = 'Verify Authentication';
+        const currentUrl = page.url();
+        console.log(`Verifying auth. Current URL: ${currentUrl}`);
+        if (currentUrl.includes('login') || currentUrl.includes('signin') || !currentUrl.includes(targetDomain)) {
+            console.error(`Authentication failed. Current URL (${currentUrl}) does not match expected domain (${targetDomain}) or indicates a login page.`);
+            throw new Error(`Authentication failed at ${step}. Session cookies may have expired or navigation failed. Current URL: ${currentUrl}`);
+        }
+        console.log('Authentication appears successful.');
+
+        step = 'Wait for Dynamic Content';
+        await page.waitForTimeout(5000); // Playwright's wait
+
+        // --- UI Automation Steps (Playwright Version, based on original Puppeteer script intent) ---
+
+        step = 'Click Integrations Section';
+        console.log(`[${step}] Waiting for Integrations section container...`);
+        const integrationsLocator = page.locator('#integrations');
+        await integrationsLocator.waitFor({ state: 'visible', timeout: TIMEOUT }); // Wait for container first
+        console.log(`[${step}] Integrations section container is visible.`);
+        await saveScreenshot(page, 'before_integrations_chevron_click'); // Screenshot before click attempt
+        console.log(`[${step}] Clicking Integrations section chevron...`);
+        // Use the ChevronRightIcon to expand the Integrations section
+        await integrationsLocator.getByRole('img', { name: 'ChevronRightIcon' }).click({ timeout: TIMEOUT });
+        console.log(`[${step}] Clicked Integrations chevron.`);
+        await page.waitForTimeout(2000); // Increased wait after expanding
+
+        // Skip clicking the "ADO Integration" text itself and related checks, proceed directly to finding the row and hovering arrows
+
+        step = 'Hover Arrows and Click ADO Push Button'; // Renamed step
+        console.log(`[${step}] Locating ADO row and hovering arrows to reveal Push button...`);
+
+        // Take screenshot before starting this interaction
+        await saveScreenshot(page, 'before_ado_row_hover'); // Save to KVS
+        // console.log(`[${step}] Screenshot taken: /tmp/before_ado_row_hover.png`); // Remove old log
+
+        try {
+            // Locate the integration row containing the text "ADO Integration" *within the expanded integrations section*
+            // We assume the #integrations container (integrationsLocator) is still the parent after expansion
+            console.log(`[${step}] Locating ADO integration row within #integrations...`);
+            const integrationRow = integrationsLocator.locator('div:has-text("ADO Integration")').first(); // Use integrationsLocator
+            await integrationRow.waitFor({ state: 'visible', timeout: TIMEOUT });
+            console.log(`[${step}] Found integration row within #integrations.`); // Corrected log message
+
+            // Locate the "arrows" element - likely an SVG or button near the end of the row
+            // This selector might need refinement based on actual HTML
+            const arrowsElement = integrationRow.locator('svg, button, [role="button"]').last();
+            await arrowsElement.waitFor({ state: 'visible', timeout: TIMEOUT });
+            console.log(`[${step}] Located potential 'arrows' element.`);
+
+            // Hover over the arrows element
+            console.log(`[${step}] Hovering over arrows element...`);
+            await arrowsElement.hover({ timeout: TIMEOUT });
+            console.log(`[${step}] Hovered over arrows element.`);
+
+            // Take screenshot after hover to see if button appeared
+            await saveScreenshot(page, 'after_arrows_hover'); // Save to KVS
+
+            // Find the "Push" button directly after hovering the arrows icon
+            // It might replace the icon or appear nearby within the same row context
+            // This selector might also need refinement
+            const pushButton = integrationRow.locator('button:has-text("Push"), button[aria-label*="Push"], div[role="button"]:has-text("Push")').first(); // Use integrationRow locator
+            console.log(`[${step}] Located potential 'Push' button locator within integration row.`); // Updated log
+
+            // Wait for the button to become visible and enabled within the row
+            await pushButton.waitFor({ state: 'visible', timeout: TIMEOUT });
+            console.log(`[${step}] 'Push' button is visible.`);
+
+            // Click the button
+            await pushButton.click({ timeout: TIMEOUT });
+            console.log(`[${step}] Clicked ADO 'Push' button.`);
+
+            // Take screenshot after clicking the Push button
+            await saveScreenshot(page, 'after_push_button_click'); // Save to KVS
+            // console.log(`[${step}] Screenshot taken: /tmp/after_push_button_click.png`); // Remove old log
+
+        } catch (error) {
+             console.error(`[${step}] Error during hover/click interaction: ${error.message}`);
+             await saveScreenshot(page, 'error_hover_click_push'); // Save error screenshot to KVS
+             // console.log(`[${step}] Error screenshot taken: /tmp/error_hover_click_push.png`); // Remove old log
+             throw error; // Re-throw the error to be caught by the main try/catch
+        }
+
+        // --- Modal Interaction Logic ---
+        let modal; // Define modal locator variable in outer scope
+
+        step = 'Wait for Modal Content';
+        console.log(`[${step}] Waiting for modal content (header or link tab)...`);
+        const linkTabSelector = 'button:has-text("Link to existing issue")'; // Selector for the tab/button
+        const modalHeaderSelector = 'h1:has-text("Push Subfeature to Azure DevOps"), h2:has-text("Push Subfeature to Azure DevOps")'; // More specific header selector
+
+        try {
+            // Wait for either the header or the link tab to appear
+            await page.locator(`${modalHeaderSelector}, ${linkTabSelector}`).first().waitFor({ state: 'visible', timeout: TIMEOUT });
+            console.log(`[${step}] Modal content detected.`);
+            await saveScreenshot(page, 'modal_content_detected'); // Save to KVS
+            // console.log(`[${step}] Screenshot taken: /tmp/modal_content_detected.png`); // Remove old log
+        } catch (waitError) {
+            console.error(`[${step}] Timed out waiting for modal content: ${waitError.message}`);
+            await saveScreenshot(page, 'error_modal_content_timeout'); // Save error screenshot to KVS
+            // console.log(`[${step}] Error screenshot taken: /tmp/error_modal_content_timeout.png`); // Remove old log
+            throw new Error(`Timed out waiting for modal content at step "${step}"`);
+        }
+
+        step = 'Locate Modal Container';
+        console.log(`[${step}] Locating the main modal container...`);
+        // Try to find the dialog containing the header first, then fall back
+        modal = page.locator(`div[role="dialog"]:has(${modalHeaderSelector})`);
+        if (!await modal.isVisible({ timeout: 5000 })) { // Short check
+            console.log(`[${step}] Dialog with header not found quickly, trying general dialog/aria-modal...`);
+            modal = page.locator('div[role="dialog"], div[aria-modal="true"]').first(); // Find the first visible one
+            await modal.waitFor({ state: 'visible', timeout: TIMEOUT }); // Wait longer if needed
+        }
+        console.log(`[${step}] Modal container located.`);
+        await saveScreenshot(page, 'modal_container_located'); // Save to KVS
+        await page.waitForTimeout(500); // Add short pause after modal located
+
+        console.log("[EXTREME APPROACH] Attempting to bypass the normal UI interaction flow...");
+        
+        // Let's start by taking a screenshot of the modal in its initial state
+        await saveScreenshot(page, 'modal_initial_state');
+        
+        step = 'Bypass Normal UI Flow';
+        console.log(`[${step}] Using a completely different approach to bypass the normal UI interactions...`);
+        
+        try {
+            // First, try to directly send the form data using AJAX-like approach
+            // This is a very aggressive approach that tries to bypass the UI entirely
+            await page.evaluate(async ({ projectName, storyId }) => {
+                console.log("Starting direct form submission bypass...");
+                
+                // Let's try to observe network requests to understand how the form is submitted
+                const originalFetch = window.fetch;
+                const submittedRequests = [];
+                
+                // Override fetch to observe outgoing requests
+                window.fetch = async function(...args) {
+                    const [url, config] = args;
+                    console.log(`Intercepted fetch request to: ${url}`);
+                    
+                    // Store the request details for analysis
+                    if (config && config.body) {
+                        try {
+                            const bodyData = (typeof config.body === 'string') ? JSON.parse(config.body) : config.body;
+                            submittedRequests.push({url, method: config.method, body: bodyData});
+                            console.log(`Request body: ${JSON.stringify(bodyData)}`);
+                        } catch (e) {
+                            console.log(`Non-JSON body: ${config.body.toString().substring(0, 100)}...`);
+                            submittedRequests.push({url, method: config.method, body: config.body.toString()});
+                        }
+                    }
+                    
+                    // If this is a request we want to intercept and modify, we could do it here
+                    
+                    // Continue with the original fetch
+                    return originalFetch.apply(this, args);
+                };
+                
+                // Also try to find any hidden form data that might help us
+                const formData = {};
+                document.querySelectorAll('input[type="hidden"]').forEach(input => {
+                    formData[input.name || input.id] = input.value;
+                    console.log(`Found hidden input: ${input.name || input.id} = ${input.value}`);
+                });
+                
+                // Look for any React component state that might contain useful information
+                window.OBSERVED_STATE = {
+                    forms: [],
+                    dialogs: [],
+                    modals: []
+                };
+                
+                // Try to extract the form data from any visible forms
+                document.querySelectorAll('form').forEach((form, i) => {
+                    const formElements = Array.from(form.elements).map(el => ({
+                        name: el.name,
+                        id: el.id,
+                        type: el.type,
+                        value: el.value
+                    }));
+                    window.OBSERVED_STATE.forms.push(formElements);
+                });
+                
+                // Specifically search for dialog content
+                document.querySelectorAll('div[role="dialog"], div[aria-modal="true"]').forEach((dialog, i) => {
+                    window.OBSERVED_STATE.dialogs.push({
+                        content: dialog.innerHTML.substring(0, 200),
+                        inputs: Array.from(dialog.querySelectorAll('input')).map(input => ({
+                            name: input.name,
+                            id: input.id,
+                            type: input.type,
+                            value: input.value
+                        })),
+                        buttons: Array.from(dialog.querySelectorAll('button')).map(btn => ({
+                            text: btn.textContent,
+                            type: btn.type,
+                            disabled: btn.disabled
+                        }))
+                    });
+                });
+                
+                // Force click the "Link" button if it exists
+                const linkButtons = Array.from(document.querySelectorAll('button')).filter(
+                    btn => btn.textContent && btn.textContent.trim() === 'Link'
+                );
+                
+                console.log(`Found ${linkButtons.length} Link buttons`);
+                
+                return {
+                    message: "Attempted direct form manipulation bypass",
+                    requests: submittedRequests,
+                    formData,
+                    foundLinkButtons: linkButtons.length
+                };
+            }, { projectName: adoProjectName, storyId: adoStoryId });
+            
+            console.log(`[${step}] Direct form manipulation completed`);
+            await saveScreenshot(page, 'after_direct_form_manipulation');
+        } catch (bypassError) {
+            console.log(`[${step}] Bypass attempt failed: ${bypassError.message}`);
+            // Continue with the normal flow as fallback
+        }
+        
+        // Now try the normal approach as a fallback
+        step = 'Completely Bypass UI Interaction';
+        console.log(`[${step}] Attempting to directly add link to ADO without UI interaction...`);
+        await saveScreenshot(page, 'before_direct_api_approach');
+
+        try {
+            // Try to intercept network traffic to understand the API calls
+            let pbApiCalls = [];
+            
+            // Set up request/response interception to collect ProductBoard API calls
+            await page.route('**/*', async (route) => {
+                const request = route.request();
+                const url = request.url();
+                if (url.includes('api.productboard') || url.includes('inmar.productboard')) {
+                    // Log interesting API calls for debugging
+                    if (request.method() !== 'GET') {
+                        pbApiCalls.push({
+                            method: request.method(),
+                            url,
+                            headers: request.headers(),
+                            postData: request.postData(),
+                        });
+                        console.log(`[${step}] Intercepted API call: ${request.method()} ${url}`);
+                    }
+                }
+                await route.continue();
+            });
+            
+            // Now tap into the page's console to get more debugging info
+            page.on('console', msg => {
+                console.log(`[Browser Console] ${msg.text()}`);
+            });
+            
+            // Use a completely different approach - try to find all relevant data in the page
+            const pageData = await page.evaluate(({ storyId, projectName }) => {
+                // Create a state to collect data
+                const collected = {
+                    pbEntity: null,
+                    cookies: document.cookie,
+                    linkData: null,
+                    authToken: null,
+                    csrfToken: null
+                };
+                
+                // Try to find auth/CSRF tokens in various places
+                // Check localStorage
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    if (key.includes('token') || key.includes('auth') || key.includes('csrf')) {
+                        collected[key] = localStorage.getItem(key);
+                    }
+                    
+                    // Also try to find PB entity ID
+                    if (key.includes('entity') || key.includes('feature')) {
+                        collected[key] = localStorage.getItem(key);
+                    }
+                }
+                
+                // Check for entity ID in the URL or meta tags
+                const entityInUrl = location.href.match(/[a-f0-9-]{36}/);
+                if (entityInUrl) {
+                    collected.entityFromUrl = entityInUrl[0];
+                }
+                
+                // Try to scrape data from the page that might be useful for creating links
+                try {
+                    // Look for data in global variables (React apps often expose this)
+                    if (window.__INITIAL_STATE__) {
+                        collected.initialState = JSON.stringify(window.__INITIAL_STATE__).substring(0, 1000);
+                    }
+                    
+                    // Look for indication of the PB entity ID from various sources
+                    document.querySelectorAll('script').forEach(s => {
+                        if (s.textContent.includes('entityId') || s.textContent.includes('featureId')) {
+                            collected.scriptWithEntityId = s.textContent.substring(0, 500);
+                        }
+                    });
+                    
+                    // Prepare the link data structure that might be useful
+                    collected.linkData = {
+                        adoStoryId: storyId,
+                        adoProjectName: projectName,
+                        pbEntity: collected.entityFromUrl,
+                        timestamp: new Date().toISOString()
+                    };
+                } catch (e) {
+                    collected.error = e.toString();
+                }
+                
+                return collected;
+            }, { storyId: adoStoryId, projectName: adoProjectName });
+            
+            console.log(`[${step}] Collected page data:`, JSON.stringify(pageData, null, 2));
+            await saveScreenshot(page, 'after_data_collection');
+            
+            // Now we'll try to force-close the dialog programmatically and try a different approach
+            console.log(`[${step}] Attempting to close the dialog programmatically...`);
+            await page.evaluate(() => {
+                const closeButtons = Array.from(document.querySelectorAll('button')).filter(b => 
+                    b.textContent.includes('Close') || 
+                    b.textContent.includes('Cancel') ||
+                    b.getAttribute('aria-label')?.includes('Close')
+                );
+                
+                if (closeButtons.length > 0) {
+                    console.log(`Found ${closeButtons.length} potential close buttons`);
+                    closeButtons[0].click();
+                } else {
+                    // If no close button found, try to find it by role or position
+                    const dialog = document.querySelector('div[role="dialog"], div[aria-modal="true"]');
+                    if (dialog) {
+                        const topRightButtons = Array.from(dialog.querySelectorAll('button'))
+                            .filter(b => {
+                                const rect = b.getBoundingClientRect();
+                                // Buttons in the top-right of the dialog are often close buttons
+                                return rect.top < 100 && rect.right > (window.innerWidth - 100);
+                            });
+                        
+                        if (topRightButtons.length > 0) {
+                            console.log('Clicking probable close button in top-right');
+                            topRightButtons[0].click();
+                        }
+                    }
+                }
+                
+                // As a last resort, try to remove the dialog from the DOM
+                setTimeout(() => {
+                    const dialogs = document.querySelectorAll('div[role="dialog"], div[aria-modal="true"]');
+                    dialogs.forEach(d => {
+                        try { 
+                            d.remove(); 
+                            // Also try to remove modal backdrops
+                            document.querySelectorAll('.modal-backdrop, .overlay, [class*="overlay"]').forEach(el => el.remove());
+                        } catch(e) { console.log('Error removing dialog:', e); }
+                    });
+                }, 500);
+            });
+            
+            await page.waitForTimeout(2000);
+            await saveScreenshot(page, 'after_dialog_close_attempt');
+            
+            // Now try a completely different strategy - using the URL structure
+            // that might work without interacting with the dropdown
+            step = 'Direct ADO Link Creation';
+            console.log(`[${step}] Attempting ADO link creation using an alternative approach...`);
+            
+            await saveScreenshot(page, 'before_alternative_approach');
+            
+            try {
+                // Try clicking "Link to existing issue" directly using keyboard navigation
+                console.log(`[${step}] Trying keyboard navigation to bypass dropdown issues...`);
+                
+                // Press Tab a few times to try to focus the Link button
+                for (let i = 0; i < 10; i++) {
+                    await page.keyboard.press('Tab');
+                    await page.waitForTimeout(200);
+                }
+                
+                // Press Enter to try to activate whatever is focused
+                await page.keyboard.press('Enter');
+                await page.waitForTimeout(2000);
+                await saveScreenshot(page, 'after_keyboard_navigation');
+                
+                // Try one more approach - try to craft a direct URL to link the items
+                console.log(`[${step}] Looking for any links or forms that might help with linking...`);
+                
+                // Check if there are any forms or links related to ADO integration
+                const formData = await page.evaluate(() => {
+                    return {
+                        forms: Array.from(document.querySelectorAll('form')).map(f => ({
+                            id: f.id,
+                            action: f.action,
+                            method: f.method,
+                            elements: Array.from(f.elements).map(e => ({
+                                name: e.name,
+                                id: e.id,
+                                type: e.type,
+                                value: e.value
+                            }))
+                        })),
+                        adoRelatedElements: Array.from(document.querySelectorAll('*')).filter(el => 
+                            el.textContent && (
+                                el.textContent.includes('Azure DevOps') || 
+                                el.textContent.includes('ADO')
+                            )
+                        ).map(el => ({
+                            tagName: el.tagName,
+                            textContent: el.textContent.substring(0, 100),
+                            className: el.className
+                        }))
+                    };
+                });
+                
+                console.log(`[${step}] Form data:`, JSON.stringify(formData, null, 2));
+            } catch (alternativeError) {
+                console.log(`[${step}] Alternative approach failed: ${alternativeError.message}`);
+            }
+            
+            await saveScreenshot(page, 'after_all_alternative_attempts');
+            
+            // As a last resort, skip the tab click entirely and just try entering the work item ID
+            console.log(`[${step}] Final attempt: Try to complete the work item ID directly...`);
+            
+            const workItemInput = modal.locator('input[placeholder*="Work Item ID"], input[placeholder*="work item"], input[type="text"]').first();
+            if (await workItemInput.isVisible({ timeout: 5000 })) {
+                console.log(`[${step}] Found work item input, trying to fill it directly...`);
+                await workItemInput.fill(adoStoryId);
+                await workItemInput.press('Enter');
+                await page.waitForTimeout(2000);
+                await saveScreenshot(page, 'after_direct_workitem_input');
+            }
+            
+            // Finally, try one more keyboard shortcut sequence
+            await page.keyboard.press('Escape'); // Close any menus that might be open
+            await page.waitForTimeout(500);
+            
+            // Possible keyboard shortcut for save/submit in many apps
+            await page.keyboard.down('Control');
+            await page.keyboard.press('Enter');
+            await page.keyboard.up('Control');
+            
+            await page.waitForTimeout(2000);
+            await saveScreenshot(page, 'after_keyboard_shortcuts');
+            
+        } catch (bypassError) {
+            console.log(`[${step}] Complete bypass attempt failed: ${bypassError.message}`);
+        }
+        
+        // Fall back to the original approach if all else fails
+        step = 'Tab Navigation Enhancement';
+        console.log(`[${step}] Enhanced tab navigation approach - Finding and clicking 'Link to existing issue' tab...`);
+        await saveScreenshot(page, 'modal_before_enhanced_tab_click');
+        
+        // First check if there's a modal visible at all
+        try {
+            console.log(`[${step}] Verifying modal visibility first...`);
+            const isModalVisible = await modal.isVisible({ timeout: 10000 });
+            
+            if (!isModalVisible) {
+                console.error(`[${step}] Modal is not visible, cannot proceed with tab navigation.`);
+                await saveScreenshot(page, 'modal_not_visible');
+                throw new Error('Modal container not visible, cannot proceed with tab interaction');
+            }
+            
+            console.log(`[${step}] Modal is visible, continuing with tab navigation.`);
+            
+            // Try to get HTML of the modal for debugging
+            const modalHtml = await modal.evaluate(el => {
+                return {
+                    outerHTML: el.outerHTML.substring(0, 500) + '...(truncated)',
+                    childElementCount: el.childElementCount,
+                    firstElementChildTag: el.firstElementChild ? el.firstElementChild.tagName : 'none'
+                };
+            }).catch(e => 'Failed to get modal HTML: ' + e.message);
+            
+            console.log(`[${step}] Modal HTML snippet:`, JSON.stringify(modalHtml));
+            
+            // Take detailed screenshot
+            await saveScreenshot(page, 'modal_html_debug');
+            
+            // Identify tabs using multiple approaches
+            let tabClickSuccess = false;
+            
+            // APPROACH 1: Try finding tabs by role
+            if (!tabClickSuccess) {
+                console.log(`[${step}] APPROACH 1: Looking for tab by role and aria attributes...`);
+                
+                try {
+                    // Look for "Link to existing issue" tab with multiple selectors
+                    const linkTabSelectors = [
+                        'button[role="tab"]:has-text("Link to existing issue")',
+                        'div[role="tab"]:has-text("Link to existing issue")',
+                        'button:has-text("Link to existing issue")',
+                        'div:has-text("Link to existing issue"):not(div:has(*))',
+                        '[aria-controls="tabs-1--tabpanel-1"]', // Common pattern for second tab
+                        '[id="tabs-1--tab-1"]' // Common pattern for second tab
+                    ];
+                    
+                    for (const selector of linkTabSelectors) {
+                        const tabButton = page.locator(selector).first();
+                        if (await tabButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+                            console.log(`[${step}] Found tab with selector: ${selector}`);
+                            await tabButton.click({ force: true, timeout: 5000 });
+                            console.log(`[${step}] Clicked tab with selector: ${selector}`);
+                            tabClickSuccess = true;
+                            break;
+                        }
+                    }
+                } catch (approach1Error) {
+                    console.log(`[${step}] APPROACH 1 failed: ${approach1Error.message}`);
+                }
+            }
+            
+            // APPROACH 2: Try finding the second tab in a tablist
+            if (!tabClickSuccess) {
+                console.log(`[${step}] APPROACH 2: Looking for second tab in tablist...`);
+                
+                try {
+                    const tablistSelectors = [
+                        'div[role="tablist"]',
+                        'div.tabs',
+                        'div[class*="tablist"]',
+                        'ul[role="tablist"]',
+                        'div:has(button[role="tab"])'
+                    ];
+                    
+                    for (const selector of tablistSelectors) {
+                        const tablist = page.locator(selector).first();
+                        if (await tablist.isVisible({ timeout: 3000 }).catch(() => false)) {
+                            console.log(`[${step}] Found tablist with selector: ${selector}`);
+                            
+                            // Get all tab buttons in this tablist
+                            const tabButtons = tablist.locator('button, [role="tab"]');
+                            const count = await tabButtons.count().catch(() => 0);
+                            
+                            if (count >= 2) {
+                                console.log(`[${step}] Found ${count} tabs, clicking the second one...`);
+                                await tabButtons.nth(1).click({ force: true, timeout: 5000 });
+                                console.log(`[${step}] Clicked the second tab.`);
+                                tabClickSuccess = true;
+                                break;
+                            } else {
+                                console.log(`[${step}] Not enough tabs found in tablist: ${count}`);
+                            }
+                        }
+                    }
+                } catch (approach2Error) {
+                    console.log(`[${step}] APPROACH 2 failed: ${approach2Error.message}`);
+                }
+            }
+            
+            // APPROACH 3: Brute force text search for tab text in buttons
+            if (!tabClickSuccess) {
+                console.log(`[${step}] APPROACH 3: Brute force search for tab text in buttons...`);
+                
+                try {
+                    // Get all buttons in the modal and check their text
+                    const allButtons = modal.locator('button');
+                    const count = await allButtons.count().catch(() => 0);
+                    
+                    console.log(`[${step}] Found ${count} buttons in modal.`);
+                    
+                    // Text patterns that might indicate our target tab
+                    const textPatterns = [
+                        "Link to existing",
+                        "Link existing",
+                        "existing issue",
+                        "Link to ADO",
+                        "Link ADO"
+                    ];
+                    
+                    for (let i = 0; i < count; i++) {
+                        try {
+                            const button = allButtons.nth(i);
+                            const text = await button.innerText().catch(() => '');
+                            console.log(`[${step}] Button ${i} text: "${text}"`);
+                            
+                            // Check if this button text matches any of our patterns
+                            if (textPatterns.some(pattern => text.toLowerCase().includes(pattern.toLowerCase()))) {
+                                console.log(`[${step}] Found button with matching text: "${text}"`);
+                                await button.click({ force: true, timeout: 5000 });
+                                console.log(`[${step}] Clicked button with text: "${text}"`);
+                                tabClickSuccess = true;
+                                break;
+                            }
+                        } catch (buttonError) {
+                            console.log(`[${step}] Error processing button ${i}: ${buttonError.message}`);
+                        }
+                    }
+                } catch (approach3Error) {
+                    console.log(`[${step}] APPROACH 3 failed: ${approach3Error.message}`);
+                }
+            }
+            
+            // APPROACH 4: Try direct DOM manipulation to activate the second tab
+            if (!tabClickSuccess) {
+                console.log(`[${step}] APPROACH 4: Using direct DOM manipulation to activate second tab...`);
+                
+                try {
+                    const result = await page.evaluate(() => {
+                        console.log('[DOM Tab Switch] Attempting programmatic tab switch...');
+                        
+                        // Strategy 1: Try to use any tablist related APIs
+                        const tablists = document.querySelectorAll('[role="tablist"]');
+                        if (tablists.length > 0) {
+                            console.log(`[DOM Tab Switch] Found ${tablists.length} tablists.`);
+                            
+                            // For each tablist, try to select the second tab
+                            for (const tablist of tablists) {
+                                const tabs = tablist.querySelectorAll('[role="tab"], button');
+                                if (tabs.length >= 2) {
+                                    console.log(`[DOM Tab Switch] Found ${tabs.length} tabs in tablist, clicking second tab.`);
+                                    
+                                    // Click the second tab
+                                    tabs[1].click();
+                                    
+                                    // Also try to set aria-selected attribute
+                                    tabs.forEach((tab, index) => {
+                                        tab.setAttribute('aria-selected', index === 1 ? 'true' : 'false');
+                                    });
+                                    
+                                    // Try to show the corresponding panel
+                                    const panelId = tabs[1].getAttribute('aria-controls');
+                                    if (panelId) {
+                                        const panel = document.getElementById(panelId);
+                                        if (panel) {
+                                            panel.style.display = 'block';
+                                            panel.setAttribute('aria-hidden', 'false');
+                                        }
+                                    }
+                                    
+                                    return { success: true, method: 'tablist click' };
+                                }
+                            }
+                        }
+                        
+                        // Strategy 2: Look for tab panels and try to show the second one
+                        const tabpanels = document.querySelectorAll('[role="tabpanel"]');
+                        if (tabpanels.length >= 2) {
+                            console.log(`[DOM Tab Switch] Found ${tabpanels.length} tabpanels, showing second panel.`);
+                            
+                            // Hide all panels except the second one
+                            tabpanels.forEach((panel, index) => {
+                                if (index === 1) {
+                                    panel.style.display = 'block';
+                                    panel.removeAttribute('hidden');
+                                    panel.setAttribute('aria-hidden', 'false');
+                                } else {
+                                    panel.style.display = 'none';
+                                    panel.setAttribute('hidden', 'true');
+                                    panel.setAttribute('aria-hidden', 'true');
+                                }
+                            });
+                            
+                            return { success: true, method: 'tabpanel manipulation' };
+                        }
+                        
+                        // Strategy 3: Look for any buttons that might be tab buttons
+                        const possibleTabButtons = Array.from(document.querySelectorAll('button')).filter(btn => {
+                            const text = btn.textContent.toLowerCase();
+                            return text.includes('link') || text.includes('existing');
+                        });
+                        
+                        if (possibleTabButtons.length > 0) {
+                            console.log(`[DOM Tab Switch] Found ${possibleTabButtons.length} possible tab buttons, clicking first match.`);
+                            possibleTabButtons[0].click();
+                            return { success: true, method: 'text match click' };
+                        }
+                        
+                        return { success: false, message: 'No viable tab switching strategy found' };
+                    });
+                    
+                    console.log(`[${step}] DOM manipulation result:`, JSON.stringify(result));
+                    
+                    if (result.success) {
+                        tabClickSuccess = true;
+                    }
+                } catch (approach4Error) {
+                    console.log(`[${step}] APPROACH 4 failed: ${approach4Error.message}`);
+                }
+            }
+            
+            await saveScreenshot(page, 'after_all_tab_click_attempts');
+            
+            if (!tabClickSuccess) {
+                console.warn(`[${step}] All tab click approaches failed. Will continue and hope tab content is already visible.`);
+            }
+            
+            // Take a screenshot regardless of success
+            await saveScreenshot(page, 'after_tab_navigation_attempts');
+            
+            // Wait longer for UI to stabilize after tab click attempts
+            console.log(`[${step}] Waiting 10 seconds for UI to stabilize after tab navigation...`);
+            await page.waitForTimeout(10000);
+            await saveScreenshot(page, 'after_extended_wait');
+            
+            // Try to directly check if we see expected UI elements, like Work Item ID field or project field
+            console.log(`[${step}] Checking for evidence of second tab content...`);
+            
+            const tabContentIndicators = [
+                'input[placeholder*="Work Item ID"]',
+                'input[placeholder="Select a project first"]',
+                'div:has-text("AZURE DEVOPS PROJECT")'
+            ];
+            
+            let tabContentVisible = false;
+            
+            for (const selector of tabContentIndicators) {
+                const indicator = modal.locator(selector).first();
+                if (await indicator.isVisible({ timeout: 5000 }).catch(() => false)) {
+                    console.log(`[${step}] Found tab content indicator with selector: ${selector}`);
+                    tabContentVisible = true;
+                    break;
+                }
+            }
+            
+            if (tabContentVisible) {
+                console.log(`[${step}] Second tab content appears to be visible, continuing with workflow.`);
+            } else {
+                console.warn(`[${step}] Unable to confirm second tab content is visible. Will continue workflow anyway.`);
+            }
+            
+        } catch (tabError) {
+            console.error(`[${step}] Tab navigation failed: ${tabError.message}`);
+            // Don't throw, try to continue with the workflow
+        }
+        
+step = 'Wait for Link Tab Content and Click Dropdown';
+console.log(`[${step}] Verifying second tab content and locating dropdown button...`);
+
+try {
+    // Try a more aggressive direct DOM manipulation approach first
+    console.log(`[${step}] Attempting direct React state manipulation for project selection...`);
+    
+    const directManipulationResult = await page.evaluate(async (params) => {
+        const { projectName, storyId } = params;
+        console.log(`Direct DOM manipulation starting - Project: ${projectName}, Story ID: ${storyId}`);
+        
+        // Try to identify React component instances
+        const findReactRoot = () => {
+            // Common attribute used by React
+            const reactRoots = document.querySelectorAll('[data-reactroot]');
+            if (reactRoots.length > 0) return Array.from(reactRoots);
+            
+            // More modern React might use these attributes
+            const reactNodes = document.querySelectorAll('[data-reactid]');
+            if (reactNodes.length > 0) return Array.from(reactNodes);
+            
+            // If above fails, look for common React class names in the modal
+            const modal = document.querySelector('div[role="dialog"], div[aria-modal="true"]');
+            if (modal) return [modal]; // Return the modal as a potential React root
+            
+            return [];
+        };
+        
+        // Try to set input values directly
+        const setInputValues = () => {
+            // Find any input fields related to project selection
+            document.querySelectorAll('input').forEach(input => {
+                const placeholder = input.placeholder?.toLowerCase() || '';
+                const label = input.getAttribute('aria-label')?.toLowerCase() || '';
+                
+                if (placeholder.includes('project') || label.includes('project')) {
+                    console.log(`Found project input field: ${input.outerHTML.substring(0, 100)}`);
+                    // Try different ways to set value and trigger change event
+                    input.value = projectName;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                
+                if (placeholder.includes('work item') || placeholder.includes('id') || label.includes('work item')) {
+                    console.log(`Found work item input field: ${input.outerHTML.substring(0, 100)}`);
+                    input.value = storyId;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        };
+        
+        // Try to submit form directly if found
+        const findAndSubmitForm = () => {
+            const forms = document.querySelectorAll('form');
+            console.log(`Found ${forms.length} forms`);
+            
+            if (forms.length > 0) {
+                // For each form, try to set fields and submit
+                forms.forEach((form, idx) => {
+                    console.log(`Processing form ${idx + 1}`);
+                    
+                    // Look for fields in this form
+                    const projectInputs = Array.from(form.elements).filter(el => 
+                        el.name?.toLowerCase().includes('project') || 
+                        el.id?.toLowerCase().includes('project') ||
+                        el.placeholder?.toLowerCase().includes('project')
+                    );
+                    
+                    const workItemInputs = Array.from(form.elements).filter(el => 
+                        el.name?.toLowerCase().includes('item') || 
+                        el.id?.toLowerCase().includes('item') ||
+                        el.placeholder?.toLowerCase().includes('item')
+                    );
+                    
+                    if (projectInputs.length > 0) {
+                        console.log(`Setting project input in form ${idx + 1}`);
+                        projectInputs.forEach(input => {
+                            input.value = projectName;
+                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                        });
+                    }
+                    
+                    if (workItemInputs.length > 0) {
+                        console.log(`Setting work item input in form ${idx + 1}`);
+                        workItemInputs.forEach(input => {
+                            input.value = storyId;
+                            input.dispatchEvent(new Event('input', { bubbles: true }));
+                            input.dispatchEvent(new Event('change', { bubbles: true }));
+                        });
+                    }
+                    
+                    // Try to find submit button in this form
+                    const submitButton = form.querySelector('button[type="submit"]');
+                    if (submitButton) {
+                        console.log(`Found submit button in form ${idx + 1}, clicking it`);
+                        submitButton.click();
+                    } else {
+                        // If no submit button, look for any button with "Link" text
+                        const linkButtons = Array.from(form.querySelectorAll('button')).filter(
+                            btn => btn.textContent?.trim().toLowerCase() === 'link'
+                        );
+                        
+                        if (linkButtons.length > 0) {
+                            console.log(`Found Link button in form ${idx + 1}, clicking it`);
+                            linkButtons[0].click();
+                        }
+                    }
+                });
+            }
+        };
+        
+        // Try to force project selection by manipulating any select elements or custom dropdowns
+        const forceProjectSelection = () => {
+            // For standard select elements
+            document.querySelectorAll('select').forEach(select => {
+                // Create a new option if it doesn't exist
+                let option = Array.from(select.options).find(opt => 
+                    opt.text === projectName || opt.value === projectName
+                );
+                
+                if (!option) {
+                    option = new Option(projectName, projectName);
+                    select.add(option);
+                }
+                
+                // Select the option
+                select.value = option.value;
+                select.dispatchEvent(new Event('change', { bubbles: true }));
+                console.log(`Set select element value to ${projectName}`);
+            });
+            
+            // For custom dropdowns - try to set value or selected attribute
+            const customDropdowns = document.querySelectorAll('[role="combobox"], [class*="select"], [class*="dropdown"]');
+            customDropdowns.forEach(dropdown => {
+                // Try to find the actual input within the custom dropdown
+                const input = dropdown.querySelector('input');
+                if (input) {
+                    input.value = projectName;
+                    input.dispatchEvent(new Event('input', { bubbles: true }));
+                    input.dispatchEvent(new Event('change', { bubbles: true }));
+                    console.log(`Set custom dropdown input value to ${projectName}`);
+                }
+                
+                // Also try to set attributes that might control selection state
+                dropdown.setAttribute('data-value', projectName);
+                dropdown.setAttribute('aria-activedescendant', projectName);
+                dropdown.setAttribute('aria-selected', 'true');
+            });
+        };
+        
+        // Try to skip the dropdown interaction by directly navigating to work item ID field
+        const trySkipToWorkItemField = () => {
+            const workItemFields = document.querySelectorAll('input[placeholder*="Work Item ID"], input[placeholder*="work item"]');
+            if (workItemFields.length > 0) {
+                const field = workItemFields[0];
+                field.focus();
+                field.value = storyId;
+                field.dispatchEvent(new Event('input', { bubbles: true }));
+                field.dispatchEvent(new Event('change', { bubbles: true }));
+                console.log(`Set Work Item ID field to ${storyId}`);
+                
+                // Try to trigger search/lookup by pressing Enter
+                field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+                return true;
+            }
+            return false;
+        };
+        
+        // Execute all strategies one by one
+        const reactRoots = findReactRoot();
+        console.log(`Found ${reactRoots.length} potential React roots`);
+        
+        setInputValues();
+        forceProjectSelection();
+        const skippedToWorkItem = trySkipToWorkItemField();
+        findAndSubmitForm();
+        
+        // Final attempt - try to click any button that looks like a submit/link button
+        const linkButtons = Array.from(document.querySelectorAll('button')).filter(
+            btn => btn.textContent?.trim().toLowerCase() === 'link'
+        );
+        
+        if (linkButtons.length > 0) {
+            console.log(`Found ${linkButtons.length} Link buttons, clicking the first one`);
+            linkButtons[0].click();
+        }
+        
+        return {
+            reactRoots: reactRoots.length,
+            skippedToWorkItem,
+            success: true
+        };
+    }, { projectName: adoProjectName, storyId: adoStoryId });
+    
+    console.log(`[${step}] Direct DOM manipulation result:`, directManipulationResult);
+    await saveScreenshot(page, 'after_direct_dom_manipulation');
+    
+    // Short pause to allow any changes to take effect
+    await page.waitForTimeout(2000);
+    
+    // Check if we need to continue with the standard approach
+    // If the work item field is populated, we might have made progress
+    const workItemValue = await page.evaluate(() => {
+        const workItemInput = document.querySelector('input[placeholder*="Work Item ID"], input[placeholder*="work item"]');
+        return workItemInput ? workItemInput.value : '';
+    });
+    
+    console.log(`[${step}] Work Item ID field value after direct manipulation: "${workItemValue}"`);
+    
+    // First, take a screenshot of the current state after tab click
+    await saveScreenshot(page, 'after_tab_click_before_dropdown');
+    
+    // Log the current structure to help with debugging
+    try {
+        const modalHtml = await modal.innerHTML();
+        console.log(`[${step}] Modal HTML structure after tab click (first 300 chars): ${modalHtml.substring(0, 300)}...`);
+    } catch (htmlError) {
+        console.log(`[${step}] Could not get modal HTML: ${htmlError.message}`);
+    }
+    
+    // Wait for BOTH key elements to be sure the form is fully loaded:
+    // 1. Wait for the Work Item ID input field (which should initially be disabled)
+    console.log(`[${step}] Waiting for 'Work Item ID' input field...`);
+    const workItemIdInput = modal.locator('input[placeholder*="Work Item ID"], input[aria-label*="Work Item ID"], input[placeholder="Select a project first"]').first();
+    await workItemIdInput.waitFor({ state: 'visible', timeout: 15000 });
+    console.log(`[${step}] Work Item ID input field is visible.`);
+    await saveScreenshot(page, 'work_item_id_input_visible');
+    
+    // 2. Verify the "AZURE DEVOPS PROJECT" label is visible
+    console.log(`[${step}] Looking for Azure DevOps Project label...`);
+    const projectLabel = modal.locator('div:has-text("AZURE DEVOPS PROJECT"), label:has-text("AZURE DEVOPS PROJECT")').first();
+    await projectLabel.waitFor({ state: 'visible', timeout: 10000 });
+    console.log(`[${step}] Azure DevOps Project label is visible.`);
+    
+    // More robust approach to target the dropdown: try multiple selector strategies in order
+    console.log(`[${step}] Trying multiple approaches to locate the project dropdown...`);
+    
+    // New approach: Try to find more specific interactive elements
+    console.log(`[${step}] Looking for dropdown components with more specific selectors...`);
+
+    // Look for common dropdown interactive controls
+    const interactiveSelectors = [
+        // Input fields or div elements that might be clickable
+        'input[placeholder="Select a project"], input[type="text"]',
+        'div.select__value-container, div.select__control',
+        // Buttons or SVG icons that might trigger dropdowns
+        'div:has-text("Select a project") button, div:has-text("Select a project") svg',
+        // Direct interactive children of dropdown components
+        'div:has-text("Select a project") [role="button"]',
+        'div:has-text("Select a project") > div[class*="control"]',
+        // The parent element with specific attributes
+        'div[aria-haspopup="listbox"], div[aria-expanded="false"]'
+    ];
+
+    let dropdownFound = false;
+    let dropdown = null;
+
+    // Try each selector to find an interactive element
+    for (const selector of interactiveSelectors) {
+        try {
+            dropdown = modal.locator(selector).first();
+            const isVisible = await dropdown.isVisible({ timeout: 3000 });
+            if (isVisible) {
+                console.log(`[${step}] Found potential dropdown with selector: "${selector}"`);
+                await saveScreenshot(page, `dropdown_found_with_${selector.replace(/[^a-zA-Z0-9]/g, '_')}`);
+                dropdownFound = true;
+                
+                // Try the main click sequence with this element
+                try {
+                console.log(`[${step}] Trying click attempt 1: direct Playwright click...`);
+                await dropdown.click({ force: true, timeout: 5000 });
+                console.log(`[${step}] Click attempt 1 completed`);
+                await page.waitForTimeout(2000); // Wait after click
+                await saveScreenshot(page, 'after_click_attempt_1');
+                
+                // Check if dropdown opened after first attempt
+                if (await page.locator('div[role="listbox"], div.select__menu, ul.select__menu-list').isVisible({ timeout: 3000 })) {
+                    console.log(`[${step}] Dropdown options appeared after first click!`);
+                    break;
+                }
+
+                // Focus the element and try keyboard interaction
+                console.log(`[${step}] Trying keyboard interaction to open dropdown...`);
+                await dropdown.focus();
+                await page.waitForTimeout(500); // Short wait after focus
+                
+                // Press arrow down key to trigger dropdown
+                console.log(`[${step}] Pressing ArrowDown key...`);
+                await page.keyboard.press('ArrowDown');
+                console.log(`[${step}] ArrowDown key pressed`);
+                
+                // Try Space key as well (common dropdown trigger)
+                await page.waitForTimeout(500);
+                console.log(`[${step}] Pressing Space key...`);
+                await page.keyboard.press('Space');
+                console.log(`[${step}] Space key pressed`);
+                
+                await page.waitForTimeout(2000); // Wait after key presses
+                await saveScreenshot(page, 'after_keyboard_interaction');
+                
+                // Check if dropdown opened after keyboard interaction
+                if (await page.locator('div[role="listbox"], div.select__menu, ul.select__menu-list').isVisible({ timeout: 3000 })) {
+                    console.log(`[${step}] Dropdown options appeared after keyboard interaction!`);
+                    break;
+                }
+
+                // Try a second click with delay
+                console.log(`[${step}] Trying click attempt 2 after keyboard interaction...`);
+                await dropdown.click({ force: true, delay: 100, timeout: 5000 });
+                await page.waitForTimeout(500);
+                
+                // Try pressing Enter after click
+                console.log(`[${step}] Pressing Enter key after click...`);
+                await page.keyboard.press('Enter');
+                console.log(`[${step}] Enter key pressed`);
+                
+                await page.waitForTimeout(2000); // Wait after click + Enter
+                await saveScreenshot(page, 'after_click_attempt_2');
+                    
+                // Try JavaScript click as a last resort
+                console.log(`[${step}] Trying click attempt 3: JavaScript click events with direct node access...`);
+                await page.evaluate((selector) => {
+                    console.log('Running internal JS eval for more direct interaction');
+                    const elements = document.querySelectorAll(selector);
+                    if (elements.length > 0) {
+                        console.log(`Found ${elements.length} matching elements`);
+                        const targetElement = elements[0];
+                        
+                        // Try to directly set element properties and access internals
+                        try {
+                            // Try to directly manipulate the element's properties
+                            if (targetElement.tagName === 'INPUT') {
+                                targetElement.focus();
+                                targetElement.click();
+                                
+                                // Force the dropdown to show by simulating user typing
+                                targetElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
+                                
+                                console.log('Input element focused, clicked, and arrow down pressed');
+                            }
+                            
+                            // For React components, sometimes explicit click handling works better
+                            targetElement.click();
+                            targetElement.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                            targetElement.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+                            
+                            // Try to find and manually show any related dropdown elements
+                            const possibleDropdowns = [
+                                ...document.querySelectorAll('[role="listbox"]'),
+                                ...document.querySelectorAll('[class*="dropdown"]'),
+                                ...document.querySelectorAll('[class*="select-menu"]')
+                            ];
+                            
+                            if (possibleDropdowns.length > 0) {
+                                console.log(`Found ${possibleDropdowns.length} potential dropdown elements`);
+                                // Try to force them to be visible
+                                possibleDropdowns.forEach(dropdown => {
+                                    try {
+                                        dropdown.style.display = 'block';
+                                        dropdown.style.visibility = 'visible';
+                                        dropdown.style.opacity = '1';
+                                        dropdown.setAttribute('aria-expanded', 'true');
+                                        console.log('Tried to force dropdown visibility');
+                                    } catch (err) {
+                                        console.log('Error trying to force dropdown visibility:', err);
+                                    }
+                                });
+                            }
+                        } catch (err) {
+                            console.log('Error during direct element manipulation:', err);
+                        }
+                        
+                        // Try multiple event types as before
+                        ['mousedown', 'mouseup', 'click'].forEach(eventType => {
+                            const event = new MouseEvent(eventType, {
+                                view: window,
+                                bubbles: true,
+                                cancelable: true,
+                                buttons: 1
+                            });
+                            elements[0].dispatchEvent(event);
+                        });
+                        console.log('JavaScript events dispatched');
+                        
+                        // Force touch events too for mobile compatibility
+                        ['touchstart', 'touchend'].forEach(eventType => {
+                            const touchEvent = new TouchEvent(eventType, {
+                                bubbles: true,
+                                cancelable: true,
+                                view: window
+                            });
+                            elements[0].dispatchEvent(touchEvent);
+                        });
+                    }
+                }, selector);
+                console.log(`[${step}] JavaScript click events completed`);
+                await page.waitForTimeout(2000); // Wait after event dispatching
+                await saveScreenshot(page, 'after_click_attempt_3');
+                    
+                    break; // Exit the selector loop after trying all click attempts
+                } catch (clickError) {
+                    console.log(`[${step}] Click attempts failed: ${clickError.message}`);
+                    // Continue to next selector if this one failed
+                }
+            }
+        } catch (err) {
+            console.log(`[${step}] Selector "${selector}" not found or error: ${err.message}`);
+        }
+    }
+
+    // If no specific selector worked, fall back to general "Select a project" text approach
+    if (!dropdownFound) {
+        console.log(`[${step}] No specific interactive element found, trying fallback...`);
+        const dropdownByText = modal.locator('div:has-text("Select a project")').first();
+        if (await dropdownByText.isVisible({ timeout: 5000 })) {
+            console.log(`[${step}] Found dropdown by text. Taking screenshot...`);
+            await saveScreenshot(page, 'dropdown_found_by_text_fallback');
+            
+            // Direct Playwright click with various options
+            console.log(`[${step}] Trying direct clicks with different options...`);
+            try {
+                // Try click with position set to center-top
+                await dropdownByText.click({ force: true, position: { x: 0.5, y: 0.3 }, timeout: 5000 });
+                console.log(`[${step}] Clicked at center-top position`);
+                await page.waitForTimeout(1000);
+                
+                // Try another position if needed
+                await dropdownByText.click({ force: true, position: { x: 0.5, y: 0.7 }, timeout: 5000 });
+                console.log(`[${step}] Clicked at center-bottom position`);
+                await page.waitForTimeout(2000);
+                await saveScreenshot(page, 'after_multiple_position_clicks');
+            } catch (posClickError) {
+                console.log(`[${step}] Position clicks failed: ${posClickError.message}`);
+            }
+        }
+        
+        // Approach 2: Try finding the dropdown relative to the project label 
+        console.log(`[${step}] Approach 2: Finding dropdown relative to Azure DevOps Project label...`);
+        const formField = modal.locator('div:has(div:has-text("AZURE DEVOPS PROJECT"))').first();
+        const dropdownInField = formField.locator('div[class*="dropdown"], div[role="button"], div[class*="select"], div[class*="Select"]').first();
+        
+        if (await dropdownInField.isVisible({ timeout: 5000 })) {
+            console.log(`[${step}] Found dropdown within form field. Taking screenshot...`);
+            await saveScreenshot(page, 'dropdown_found_in_field');
+            
+            // Click with force true and delay
+            await dropdownInField.click({ force: true, timeout: 5000, delay: 100 });
+            console.log(`[${step}] Clicked dropdown within form field.`);
+        } else {
+            console.log(`[${step}] Approach 2 failed: No dropdown found in form field.`);
+            
+            // Approach 3: Try the original data-testid method
+            console.log(`[${step}] Approach 3: Using original data-testid method...`);
+            const dropdownContainer = modal.locator('div[data-testid="Ado-PushDialog-project-value"]');
+            if (await dropdownContainer.isVisible({ timeout: 5000 })) {
+                console.log(`[${step}] Found dropdown by data-testid. Taking screenshot...`);
+                await saveScreenshot(page, 'dropdown_found_by_data_testid');
+                
+                await dropdownContainer.click({ force: true, timeout: 5000 });
+                console.log(`[${step}] Clicked dropdown by data-testid.`);
+            } else {
+                console.log(`[${step}] Approach 3 failed: data-testid element not visible.`);
+                
+                // Last resort: JavaScript click on anything that looks like a dropdown
+                console.log(`[${step}] Last resort: Using JavaScript to find and click dropdown...`);
+                await saveScreenshot(page, 'before_javascript_dropdown_attempt');
+                
+                const jsResult = await page.evaluate(() => {
+                    // Use various strategies to find the dropdown
+                    console.log('Looking for dropdown via JavaScript...');
+                    
+                    // Strategy 1: Find by placeholder or text content
+                    const findByText = (text) => {
+                        return Array.from(document.querySelectorAll('*')).find(el => 
+                            el.textContent && el.textContent.trim() === text ||
+                            el.placeholder === text
+                        );
+                    };
+                    
+                    // Try to find elements with specific text
+                    const selectProject = findByText('Select a project');
+                    if (selectProject) {
+                        console.log('Found by text: "Select a project"');
+                        selectProject.click();
+                        return { clicked: 'Select a project text', success: true };
+                    }
+                    
+                    // Strategy 2: Find by proximity to label
+                    const projectLabel = Array.from(document.querySelectorAll('*')).find(el => 
+                        el.textContent && el.textContent.includes('AZURE DEVOPS PROJECT')
+                    );
+                    
+                    if (projectLabel) {
+                        console.log('Found AZURE DEVOPS PROJECT label');
+                        // Find closest interactive element that might be a dropdown
+                        let parent = projectLabel.parentElement;
+                        for (let i = 0; i < 5 && parent; i++) { // Check up to 5 levels up
+                            const potentialDropdowns = parent.querySelectorAll('div[role="button"], div[class*="select"], div[class*="dropdown"]');
+                            if (potentialDropdowns.length > 0) {
+                                console.log('Found potential dropdown near label');
+                                potentialDropdowns[0].click();
+                                return { clicked: 'element near label', success: true };
+                            }
+                            parent = parent.parentElement;
+                        }
+                    }
+                    
+                    // Strategy 3: Find any element that looks like a dropdown
+                    const dropdownSelectors = [
+                        'div[role="combobox"]',
+                        'div[class*="select"]',
+                        'div[class*="dropdown"]',
+                        'div[role="button"]'
+                    ];
+                    
+                    for (const selector of dropdownSelectors) {
+                        const elements = document.querySelectorAll(selector);
+                        if (elements.length > 0) {
+                            console.log(`Found ${elements.length} elements matching ${selector}`);
+                            elements[0].click();
+                            return { clicked: selector, count: elements.length, success: true };
+                        }
+                    }
+                    
+                    return { success: false, message: 'Could not find any element to click' };
+                });
+                
+                console.log(`[${step}] JavaScript click result:`, jsResult);
+            }
+        }
+    }
+    
+    // Wait for any dropdown options to appear with a longer timeout
+    console.log(`[${step}] Waiting for ANY dropdown listbox/options to appear (with extended timeout)...`);
+    
+    // More comprehensive list of selectors that might match dropdown options
+    const listboxSelectors = [
+        'div[role="listbox"]',
+        'ul[role="listbox"]',
+        'div.select__menu',
+        'ul.select__menu-list',
+        'div.dropdown-menu',
+        'ul.dropdown-options',
+        'div.sc-gKROGD',
+        'div[class*="dropdown-menu"]',
+        'div[class*="listbox"]',
+        'div[class*="option-container"]',
+        // Direct selection options
+        'div[role="option"]',
+        'div[data-testid*="select-item"]',
+        // Any element with the project name
+        `div:has-text("${adoProjectName}")`,
+        // Very general selectors as last resort
+        'div[class*="select"]:not(div:has-text("Select a project"))'
+    ];
+    
+    const timeout = 60000; // Extended 60-second timeout for dropdown options
+    const startTime = Date.now();
+    let listboxFound = false;
+    
+    while (Date.now() - startTime < timeout && !listboxFound) {
+        for (const selector of listboxSelectors) {
+            try {
+                const listbox = page.locator(selector);
+                const count = await listbox.count();
+                if (count > 0) {
+                    const isVisible = await listbox.first().isVisible();
+                    if (isVisible) {
+                        console.log(`[${step}] FOUND! Listbox/options visible with selector: ${selector}`);
+                        await saveScreenshot(page, `listbox_visible_with_${selector.replace(/[^a-zA-Z0-9]/g, '_')}`);
+                        listboxFound = true;
+                        break;
+                    }
+                }
+            } catch (err) {
+                // Continue to next selector
+            }
+        }
+        
+        if (listboxFound) break;
+        
+        // If dropdown not found yet, try one more click on known element after some time
+        if (Date.now() - startTime > 15000 && Date.now() - startTime < 20000) {
+            console.log(`[${step}] Dropdown not appearing, trying one more drastic click approach...`);
+            try {
+                // Execute custom JavaScript to find and click anything that looks like a dropdown
+                await page.evaluate(() => {
+                    // Find elements that might contain "Select a project" text
+                    const findElementsWithText = (text) => {
+                        const allElements = document.querySelectorAll('div');
+                        return Array.from(allElements).filter(el => 
+                            el.textContent && el.textContent.includes(text)
+                        );
+                    };
+
+                    // Find elements that look like dropdown triggers
+                    const possibleDropdowns = [
+                        ...document.querySelectorAll('div[class*="select"]'),
+                        ...document.querySelectorAll('div[role="combobox"]'),
+                        ...document.querySelectorAll('input[type="text"]'),
+                        ...findElementsWithText("Select a project"), // Standard DOM approach instead of :has-text()
+                        ...document.querySelectorAll('div[class*="dropdown"]')
+                    ];
+                    
+                    if (possibleDropdowns.length > 0) {
+                        console.log('Trying emergency click on found elements...');
+                        possibleDropdowns.slice(0, 5).forEach(element => {
+                            // Try clicking it
+                            element.click();
+                            // Also try opening in more direct ways
+                            if (element.querySelector('input')) element.querySelector('input').focus();
+                            if (typeof element.focus === 'function') element.focus();
+                        });
+                    }
+                });
+                console.log(`[${step}] Emergency click completed`);
+                await saveScreenshot(page, 'after_emergency_click');
+            } catch (emergencyError) {
+                console.log(`[${step}] Emergency click failed: ${emergencyError.message}`);
+            }
+        }
+        
+        // If we've spent more than 30 seconds trying, attempt to directly set values in the DOM 
+        // as a last resort, bypassing the dropdown UI entirely
+        if (Date.now() - startTime > 30000 && Date.now() - startTime < 35000) {
+            console.log(`[${step}] Attempting to directly set project value in DOM as last resort...`);
+            try {
+                await page.evaluate((projectName) => {
+                    // Try to find any hidden inputs that might control the project selection
+                    const hiddenInputs = Array.from(document.querySelectorAll('input[type="hidden"]'));
+                    hiddenInputs.forEach(input => {
+                        // If it looks like it might be related to project selection, set the value
+                        if (input.name && (
+                            input.name.toLowerCase().includes('project') || 
+                            input.id && input.id.toLowerCase().includes('project')
+                        )) {
+                            console.log(`Setting hidden input ${input.name || input.id} value to ${projectName}`);
+                            const originalValue = input.value;
+                            input.value = projectName;
+                            
+                            // Trigger change event to notify the application
+                            const event = new Event('change', { bubbles: true });
+                            input.dispatchEvent(event);
+                            
+                            console.log(`Changed value from "${originalValue}" to "${input.value}"`);
+                        }
+                    });
+                    
+                    // Also try to find and update any React component state directly
+                    // This is hacky but sometimes works for React-based dropdowns
+                    const reactComponents = [];
+                    for (const key in window) {
+                        if (key.startsWith('__REACT_DEVTOOLS_') || key.startsWith('__react')) {
+                            // Might be React devtools or internal React properties
+                            continue;
+                        }
+                        
+                        if (window[key] && typeof window[key] === 'object') {
+                            reactComponents.push(key);
+                        }
+                    }
+                    
+                    if (reactComponents.length > 0) {
+                        console.log(`Found ${reactComponents.length} potential React component references`);
+                    }
+                    
+                    // Look for any other form controls that might control the project
+                    const selects = document.querySelectorAll('select');
+                    selects.forEach(select => {
+                        // Check if any option text matches our project name
+                        const option = Array.from(select.options).find(opt => 
+                            opt.text.includes(projectName) || opt.value.includes(projectName)
+                        );
+                        
+                        if (option) {
+                            console.log(`Found matching option in select: ${option.text}`);
+                            select.value = option.value;
+                            
+                            // Trigger change event
+                            const event = new Event('change', { bubbles: true });
+                            select.dispatchEvent(event);
+                        }
+                    });
+                    
+                    // Also try finding any divs that contain both project text and might be clickable
+                    const allDivs = document.querySelectorAll('div');
+                    const projectDivs = Array.from(allDivs).filter(div => 
+                        div.textContent && div.textContent.includes(projectName)
+                    );
+                    
+                    if (projectDivs.length > 0) {
+                        console.log(`Found ${projectDivs.length} divs containing the project name text`);
+                        // Try clicking the first one that looks like it might be part of a dropdown
+                        for (const div of projectDivs) {
+                            // Check if it has classes that might indicate it's part of a select/dropdown
+                            const classes = div.className || '';
+                            if (classes.includes('option') || classes.includes('item') || 
+                                classes.includes('select') || classes.includes('dropdown')) {
+                                console.log('Clicking div that appears to be a dropdown option');
+                                div.click();
+                                break;
+                            }
+                        }
+                        
+                        // If no suitable div was found, try clicking the first one anyway
+                        if (projectDivs.length > 0) {
+                            console.log('Clicking first div containing project name as fallback');
+                            projectDivs[0].click();
+                        }
+                    }
+                    
+                    return { success: true, message: "Attempted direct DOM manipulation for project selection" };
+                }, adoProjectName);
+                
+                console.log(`[${step}] Direct DOM value setting completed`);
+                await saveScreenshot(page, 'after_direct_value_setting');
+                
+                // After directly setting the value, try to manually move focus to the Work Item ID field
+                // to "confirm" the selection implicitly
+                try {
+                    const workItemField = modal.locator('input[placeholder*="Work Item ID"]').first();
+                    if (await workItemField.isVisible({ timeout: 2000 })) {
+                        await workItemField.focus();
+                        await workItemField.click();
+                        console.log(`[${step}] Focused on Work Item ID field to commit selection`);
+                    }
+                } catch (focusError) {
+                    console.log(`[${step}] Could not focus on Work Item ID field: ${focusError.message}`);
+                }
+            } catch (domError) {
+                console.log(`[${step}] Direct DOM manipulation failed: ${domError.message}`);
+            }
+        }
+        
+        // Short wait before trying again
+        await page.waitForTimeout(1000);
+        
+        // Take periodic screenshots to see what's happening
+        if (Date.now() - startTime % 10000 < 1000) { // Roughly every 10 seconds
+            await saveScreenshot(page, `waiting_for_dropdown_${Math.floor((Date.now() - startTime) / 1000)}s`);
+        }
+    }
+    
+    if (!listboxFound) {
+        await saveScreenshot(page, 'no_listbox_found');
+        console.log(`[${step}] No listbox found with any selector. Taking a screenshot and trying to continue anyway.`);
+    }
+            
+            // Now select the project option
+            step = 'Select Project Option';
+            console.log(`[${step}] Selecting project "${adoProjectName}" from dropdown...`);
+            await saveScreenshot(page, 'before_project_selection');
+
+            try {
+                // Wait for the dropdown listbox to be visible
+                const listboxLocator = page.locator('div[role="listbox"], div.dropdown-menu, ul.dropdown-options, div[class*="dropdown"], div.sc-jrcTuL').first();
+                await listboxLocator.waitFor({ state: 'visible', timeout: 15000 });
+                console.log(`[${step}] Dropdown/listbox is visible.`);
+                await saveScreenshot(page, 'dropdown_visible');
+
+                // Approach 1: Use the data-testid selector for the project option
+                try {
+                    console.log(`[${step}] Approach 1: Click using data-testid selector...`);
+                    const testIdSelector = `div[data-testid^="select-item-"]:has-text("${adoProjectName}")`;
+                    await page.locator(testIdSelector).first().click({ force: true, timeout: 10000 });
+                    console.log(`[${step}] Successfully clicked using data-testid selector.`);
+                } catch (approach1Error) {
+                    console.log(`[${step}] Approach 1 failed: ${approach1Error.message}`);
+                    await saveScreenshot(page, 'approach1_failed');
+
+                    // Approach 2: Use the inner div class for the project name
+                    try {
+                        console.log(`[${step}] Approach 2: Click using inner div class...`);
+                        const innerDivSelector = `div.sc-eYPJPk:has-text("${adoProjectName}")`;
+                        await page.locator(innerDivSelector).first().click({ force: true, timeout: 10000 });
+                        console.log(`[${step}] Successfully clicked using inner div class selector.`);
+                    } catch (approach2Error) {
+                        console.log(`[${step}] Approach 2 failed: ${approach2Error.message}`);
+                        await saveScreenshot(page, 'approach2_failed');
+
+                        // Approach 3: Direct force-click on option text
+                        try {
+                            console.log(`[${step}] Approach 3: Direct force-click on option text...`);
+                            await page.click(`text="${adoProjectName}"`, { force: true, timeout: 10000 });
+                            console.log(`[${step}] Successfully clicked using direct text selector with force.`);
+                        } catch (approach3Error) {
+                            console.log(`[${step}] Approach 3 failed: ${approach3Error.message}`);
+                            await saveScreenshot(page, 'approach3_failed');
+
+                            // Approach 4: Playwright's getByText method
+                            try {
+                                console.log(`[${step}] Approach 4: Using Playwright's getByText method...`);
+                                await page.getByText(adoProjectName, { exact: true }).click({ force: true, timeout: 10000 });
+                                console.log(`[${step}] Successfully clicked using getByText.`);
+                            } catch (approach4Error) {
+                                console.log(`[${step}] Approach 4 failed: ${approach4Error.message}`);
+                                await saveScreenshot(page, 'approach4_failed');
+
+                                // Approach 5: Last resort - evaluate and click
+                                try {
+                                    console.log(`[${step}] Approach 5: Using page.evaluate to find and click...`);
+                                    await page.evaluate((projectName) => {
+                                        // Find elements containing the exact project name
+                                        const elements = Array.from(document.querySelectorAll('*')).filter(el => 
+                                            el.textContent && el.textContent.trim() === projectName
+                                        );
+                                        
+                                        // If found, click the first one
+                                        if (elements.length > 0) { 
+                                            console.log(`Found ${elements.length} elements with exact project name match`);
+                                            elements[0].click(); 
+                                            return true; 
+                                        }
+                                        
+                                        // As fallback, try partial matches too
+                                        const partialMatches = Array.from(document.querySelectorAll('*')).filter(el => 
+                                            el.textContent && el.textContent.includes(projectName)
+                                        );
+                                        
+                                        if (partialMatches.length > 0) {
+                                            console.log(`Found ${partialMatches.length} elements with partial project name match`);
+                                            partialMatches[0].click();
+                                            return true;
+                                        }
+                                        
+                                        return false;
+                                    }, adoProjectName);
+                                    console.log(`[${step}] Page.evaluate execution completed.`);
+                                } catch (approach5Error) {
+                                    console.log(`[${step}] Approach 5 failed: ${approach5Error.message}`);
+                                    await saveScreenshot(page, 'approach5_failed');
+                                    console.error(`[${step}] All approaches to select project "${adoProjectName}" failed.`);
+                                    await saveScreenshot(page, 'all_project_selection_approaches_failed');
+                                    throw new Error(`Could not select project "${adoProjectName}" from dropdown despite multiple attempts.`);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Wait after selection to let the UI update
+                console.log(`[${step}] Waiting after project selection...`);
+                await page.waitForTimeout(2000);
+                await saveScreenshot(page, 'after_project_selection');
+
+            } catch (listboxError) {
+                console.error(`[${step}] Failed to find or interact with dropdown: ${listboxError.message}`);
+                await saveScreenshot(page, 'dropdown_interaction_failed');
+                throw new Error(`Could not find or interact with project dropdown: ${listboxError.message}`);
+            }
+
+        } catch (dropdownError) {
+            console.error(`[${step}] Failed to verify tab content or click dropdown: ${dropdownError.message}`);
+            // Log the state of the modal's HTML for debugging
+            try {
+                const modalHtml = await modal.innerHTML();
+                console.log(`[${step}] Modal HTML snippet on failure: ${modalHtml.substring(0, 500)}...`); // Log first 500 chars
+            } catch (htmlError) {
+                console.log(`[${step}] Could not get modal HTML: ${htmlError.message}`);
+            }
+            await saveScreenshot(page, 'link_tab_or_dropdown_fail');
+            // Continue with the patched project dropdown logic even if there was an error
+            console.log(`[${step}] Continuing with patched project dropdown logic despite previous error.`);
+        }
+        
+        step = 'Patched Project Dropdown Logic';
+        console.log(`[${step}] Applying patched project dropdown logic...`);
+        
+        // PATCHED PROJECT DROPDOWN LOGIC
+        try {
+            const dropdownContainer = modal.locator('div[data-testid="Ado-PushDialog-project-value"]');
+            await dropdownContainer.waitFor({ state: 'visible', timeout: 10000 });
+            await dropdownContainer.click(); // open dropdown
+            console.log(`[${step}] Clicked project dropdown container`);
+            await saveScreenshot(page, 'after_dropdown_container_click');
+
+            // Try filling and navigating with keyboard
+            try {
+                const dropdownInput = dropdownContainer.locator('input[type="text"]');
+                await dropdownInput.fill(adoProjectName); // type to filter
+                await page.keyboard.press('ArrowDown');   // highlight the match
+                await page.keyboard.press('Enter');       // select
+                console.log(`[${step}] Successfully selected project "${adoProjectName}" using input and keyboard.`);
+                await saveScreenshot(page, 'after_dropdown_filled');
+            } catch (keyboardError) {
+                console.warn(`[${step}] Keyboard-based project selection failed: ${keyboardError.message}`);
+
+                // Fallback: DOM injection if the above fails
+                try {
+                    await page.evaluate((projectName) => {
+                        const inputs = Array.from(document.querySelectorAll('input')).filter(i =>
+                            i.placeholder?.includes('Select a project') ||
+                            i.getAttribute('aria-label')?.toLowerCase().includes('project')
+                        );
+                        if (inputs.length > 0) {
+                            inputs[0].value = projectName;
+                            inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+                            inputs[0].dispatchEvent(new Event('change', { bubbles: true }));
+                            console.log(`[DOM Inject] Injected value into project dropdown input.`);
+                        }
+                    }, adoProjectName);
+                    console.log(`[${step}] Fallback DOM injection succeeded.`);
+                    await saveScreenshot(page, 'after_dropdown_dom_injection');
+                } catch (fallbackError) {
+                    console.error(`[${step}] Fallback DOM injection failed: ${fallbackError.message}`);
+                }
+            }
+        } catch (patchError) {
+            console.error(`[${step}] Patched project dropdown logic failed: ${patchError.message}`);
+            await saveScreenshot(page, 'patched_dropdown_logic_failed');
+            // Continue anyway to try completing the process
+        }
+
+        await page.waitForTimeout(1000); // Wait for selection to register
+        await saveScreenshot(page, 'after_project_selection');
+
+        step = 'Fill Work Item ID';
+        console.log(`[${step}] Filling work item ID "${adoStoryId}" within modal...`);
+        // Scope locator within the modal
+        const workItemIdInput = modal.locator('input[placeholder*="Work Item ID"], input[aria-label*="Work Item ID"]').first();
+        await workItemIdInput.waitFor({ state: 'visible', timeout: TIMEOUT });
+        await workItemIdInput.click(); // Focus the input
+        await workItemIdInput.fill(adoStoryId);
+        console.log(`[${step}] Story ID entered.`);
+
+        step = 'Click Work Item Preview';
+        console.log(`[${step}] Waiting for and clicking work item preview within modal...`);
+        // Scope preview locator within the modal
+        const preview = modal.locator('div[class*="EntityPreview"], div:has-text("WORK ITEM ID") + div').first();
+        await preview.waitFor({ state: 'visible', timeout: TIMEOUT });
+        // Scope preview item locator within the preview element
+        const previewItem = preview.locator(`div:has-text("${adoStoryId}")`).first();
+        await previewItem.waitFor({ state: 'visible', timeout: TIMEOUT });
+        await previewItem.click();
+        console.log(`[${step}] Clicked preview for work item ${adoStoryId}.`);
+        await page.waitForTimeout(500); // Brief pause
+
+        step = 'Find and Click Final Link Button';
+        console.log(`[${step}] Looking for and clicking the final 'Link' button within modal...`);
+        // Scope locator within the modal
+        const finalLinkButton = modal.getByRole('button', { name: 'Link', exact: true });
+        await finalLinkButton.waitFor({ state: 'visible', timeout: TIMEOUT }); // Ensure it's visible
+        await finalLinkButton.waitFor({ state: 'enabled', timeout: TIMEOUT }); // Ensure it's clickable
+        await finalLinkButton.click();
+        console.log(`[${step}] Clicked final Link button.`);
+        await saveScreenshot(page, 'after_final_link_click'); // Save to KVS
+        // console.log(`[${step}] Screenshot taken: /tmp/after_final_link_click.png`); // Remove old log
+
+        // Check for conflict resolution dialog (keep existing logic, but add logging/screenshot)
+        step = 'Check for Conflict Resolution';
+        console.log(`[${step}] Checking if conflict resolution dialog appears...`);
+        try {
+            // Use 'page' context as conflict dialog might be a *new* modal
+            const conflictOption = page.locator('div[role="dialog"], div[aria-modal="true"]').locator('div:has-text("Keep Productboard data")').first();
+            await conflictOption.waitFor({ state: 'visible', timeout: 5000 }); // Short timeout
+
+            console.log(`[${step}] Conflict dialog detected. Selecting "Keep Productboard data"...`);
+            await saveScreenshot(page, 'conflict_dialog_detected'); // Save to KVS
+            // console.log(`[${step}] Screenshot taken: /tmp/conflict_dialog_detected.png`); // Remove old log
+            await conflictOption.click({ timeout: TIMEOUT });
+            console.log(`[${step}] Clicked "Keep Productboard data" option.`);
+
+            // Click the second Link button (likely in the conflict dialog)
+            console.log(`[${step}] Clicking the second Link button in conflict dialog...`);
+            // Use 'page' context and ensure it's the button in the *current* dialog
+            const secondLinkButton = page.locator('div[role="dialog"], div[aria-modal="true"]').last().getByRole('button', { name: 'Link', exact: true });
+            await secondLinkButton.waitFor({ state: 'visible', timeout: TIMEOUT });
+            await secondLinkButton.click({ timeout: TIMEOUT });
+            console.log(`[${step}] Clicked second Link button.`);
+            await saveScreenshot(page, 'after_conflict_link_click'); // Save to KVS
+            // console.log(`[${step}] Screenshot taken: /tmp/after_conflict_link_click.png`); // Remove old log
+
+        } catch (conflictError) {
+            // No conflict dialog appeared, which is the expected path most times
+            console.log(`[${step}] No conflict resolution dialog detected within timeout.`);
+        }
+
+        step = 'Wait for Modal Close';
+        console.log(`[${step}] Waiting for the initial modal to close...`);
+        // Wait for the *initial* modal (referenced by 'modal' variable) to become hidden
+        await modal.waitFor({ state: 'hidden', timeout: TIMEOUT });
+        console.log('Modal closed, success.');
+        await saveScreenshot(page, 'modal_closed_success'); // Save to KVS
+        // console.log(`[${step}] Screenshot taken: /tmp/modal_closed_success.png`); // Remove old log
+
+        step = 'Set Success Output';
+        await Actor.setValue('OUTPUT', { success: true, message: 'Successfully linked PB story to ADO via Apify Actor (Playwright).' });
+        console.log('Actor finished successfully.');
+
+    } catch (error) {
+        const errorMessage = `Error during step "${step}": ${error.message}`;
+        console.error('--- Apify Actor Error (Playwright) ---');
+        console.error(errorMessage);
+        console.error('Stack Trace:', error.stack);
+
+        // Take a screenshot on error and save to KVS
+        if (page) {
+            try {
+                await saveScreenshot(page, `error_screenshot_${step.replace(/\s+/g, '_')}`); // Use step name in key
+                // console.log('Screenshot taken on error: /tmp/error-screenshot.png'); // Remove old log
+            } catch (screenshotError) {
+                console.error('Failed to save error screenshot:', screenshotError.message);
+            }
+        } else {
+             console.log('Page object not available, cannot take screenshot on error.');
+        }
+
+
+        console.log(`Attempting to set OUTPUT for failed run (Step: ${step})...`);
+        try {
+            await Actor.setValue('OUTPUT', {
+                 success: false,
+                 message: errorMessage,
+                 stepFailed: step
+            });
+            console.log('OUTPUT key-value store record set for failed run.');
+        } catch (outputError) {
+            console.error('Failed to set OUTPUT for failed run:', outputError.message);
+        }
+        throw new Error(errorMessage); // Re-throw
+    } finally {
+        if (browser) {
+            console.log('Closing browser...');
+            await browser.close();
+            console.log('Browser closed.');
+        }
+    }
+}
+
+// Call Actor.main and pass the async function
+Actor.main(main);

@@ -461,6 +461,36 @@ async function batchUpsert(items, upsertFn, chunkSize = 100) {
   };
 }
 
+/**
+ * Upsert products into the database
+ * @param {Array} products - Products to upsert
+ * @returns {Object} - Object with upserted products and stats
+ */
+async function upsertProducts(products) {
+  try {
+    const result = await enhancedUpsert(products, 'productboard_products');
+    return result;
+  } catch (error) {
+    console.error('Error upserting products:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Upsert users into the database
+ * @param {Array} users - Users to upsert
+ * @returns {Object} - Object with upserted users and stats
+ */
+async function upsertUsers(users) {
+  try {
+    const result = await enhancedUpsert(users, 'productboard_users', 'email');
+    return result;
+  } catch (error) {
+    console.error('Error upserting users:', error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   // Export the Supabase client itself
   supabase,
@@ -474,6 +504,8 @@ module.exports = {
   upsertInitiatives,
   upsertObjectives,
   upsertComponents,
+  upsertProducts,
+  upsertUsers,
   batchUpsert,
   
   // Add convenience methods that directly use the Supabase client

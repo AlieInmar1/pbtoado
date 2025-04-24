@@ -32,7 +32,9 @@ async function syncProductBoardData(workspaceId, boardId, options = {}) {
     features_count: 0,
     initiatives_count: 0,
     objectives_count: 0,
-    components_count: 0
+    components_count: 0,
+    products_count: 0,
+    users_count: 0
   };
   
   try {
@@ -191,6 +193,74 @@ async function syncProductBoardData(workspaceId, boardId, options = {}) {
       inserted: detailedStats.components.inserted,
       updated: detailedStats.components.updated,
       unchanged: detailedStats.components.unchanged
+    });
+    
+    // Add to detailedStats object for new entities
+    detailedStats.products = { inserted: 0, updated: 0, unchanged: 0 };
+    detailedStats.users = { inserted: 0, updated: 0, unchanged: 0 };
+    
+    // Fetch and store products
+    db.logSyncActivity('Fetching products from ProductBoard');
+    const products = await api.fetchProducts();
+    stats.products_count = products.length;
+    
+    db.logSyncActivity('Transforming products for database insertion');
+    const transformedProducts = transformer.batchTransform(
+      products, 
+      transformer.transformProductForDb, 
+      workspace
+    );
+    
+    db.logSyncActivity(`Storing ${products.length} products in database`);
+    const productResult = await db.batchUpsert(transformedProducts, db.upsertProducts);
+    
+    // Track product stats
+    if (productResult && productResult.statsArray) {
+      productResult.statsArray.forEach(stat => {
+        if (stat.inserted) detailedStats.products.inserted += stat.inserted;
+        if (stat.updated) detailedStats.products.updated += stat.updated;
+        if (stat.unchanged) detailedStats.products.unchanged += stat.unchanged;
+      });
+    }
+    
+    db.logSyncActivity('Product storage complete', { 
+      total: stats.products_count,
+      processed: productResult.length,
+      inserted: detailedStats.products.inserted,
+      updated: detailedStats.products.updated,
+      unchanged: detailedStats.products.unchanged
+    });
+    
+    // Extract users from features
+    db.logSyncActivity('Extracting users from features');
+    const users = await api.extractUsersFromFeatures(features);
+    stats.users_count = users.length;
+    
+    db.logSyncActivity('Transforming users for database insertion');
+    const transformedUsers = transformer.batchTransform(
+      users, 
+      transformer.transformUserForDb, 
+      workspace
+    );
+    
+    db.logSyncActivity(`Storing ${users.length} users in database`);
+    const userResult = await db.batchUpsert(transformedUsers, db.upsertUsers);
+    
+    // Track user stats
+    if (userResult && userResult.statsArray) {
+      userResult.statsArray.forEach(stat => {
+        if (stat.inserted) detailedStats.users.inserted += stat.inserted;
+        if (stat.updated) detailedStats.users.updated += stat.updated;
+        if (stat.unchanged) detailedStats.users.unchanged += stat.unchanged;
+      });
+    }
+    
+    db.logSyncActivity('User storage complete', { 
+      total: stats.users_count,
+      processed: userResult.length,
+      inserted: detailedStats.users.inserted,
+      updated: detailedStats.users.updated,
+      unchanged: detailedStats.users.unchanged
     });
     
     // Log completion and stats

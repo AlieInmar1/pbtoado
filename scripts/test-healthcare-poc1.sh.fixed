@@ -1,0 +1,23 @@
+#!/bin/bash
+# Test script for Healthcare POC 1 Azure DevOps integration
+
+echo "🚀 Starting Healthcare POC 1 integration test..."
+
+# Make sure all test scripts are executable
+chmod +x scripts/test-ado-push.sh.fixed
+chmod +x scripts/test-ado-push.js.fixed
+chmod +x scripts/test-pb-webhook.js.fixed
+
+# Run Bash/curl test
+echo -e "\n📡 Testing direct ADO API with curl (Bash script):"
+./scripts/test-ado-push.sh.fixed
+
+# Run Node.js test 
+echo -e "\n📡 Testing direct ADO API with Node.js:"
+node scripts/test-ado-push.js.fixed
+
+# Run webhook simulation
+echo -e "\n📡 Testing ProductBoard webhook simulation:"
+node scripts/test-pb-webhook.js.fixed
+
+echo -e "\n✅ All tests completed for Healthcare POC 1 integration."

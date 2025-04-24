@@ -130,6 +130,8 @@ To use the Azure DevOps integration:
 
 For more details on the proxy server implementation, see [CORS_PROXY_SOLUTION.md](docs/CORS_PROXY_SOLUTION.md).
 
+**Note on Supabase Function Authentication (Temporary Workaround):** Currently, for local development, calls to Supabase Functions (like `pb-link-via-ui-node`) via the proxy server bypass user authentication checks. The proxy injects the `SUPABASE_SERVICE_ROLE_KEY` directly. This is **insecure** and should be replaced with proper user authentication handling (passing the user's access token) before deploying to any non-local environment.
+
 ## Project Structure
 
 - **src/components**: UI components

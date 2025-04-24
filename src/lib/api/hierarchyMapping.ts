@@ -22,9 +22,27 @@ export interface PbToAdoMapping {
 }
 
 export interface AreaPathMapping {
-  business_unit: string;
-  product_code: string;
-  team: string;
+  mapping_type: 'epic' | 'feature' | 'story';
+  
+  // ProductBoard side
+  pb_initiative_id?: string;
+  pb_initiative_name?: string;
+  pb_component_id?: string;
+  pb_component_name?: string;
+  pb_user_email?: string;
+  pb_product_id?: string;
+  pb_product_name?: string;
+  
+  // Azure DevOps side
+  ado_business_unit?: string;
+  ado_product?: string;
+  ado_team?: string;
+  
+  // Legacy fields (for backward compatibility)
+  business_unit?: string;
+  product_code?: string;
+  team?: string;
+  
   area_path: string;
   description?: string;
 }
@@ -34,6 +52,7 @@ export interface InitiativeEpicMapping {
   pb_initiative_name: string;
   ado_epic_id: number;
   ado_epic_name: string;
+  ado_business_unit?: string;
   manually_mapped: boolean;
   description?: string;
 }
@@ -43,6 +62,10 @@ export interface UserTeamMapping {
   team: string;
   business_unit?: string;
   product_code?: string;
+  pb_product_id?: string;
+  pb_product_name?: string;
+  pb_component_id?: string;
+  pb_component_name?: string;
   description?: string;
 }
 
@@ -52,6 +75,7 @@ export interface ComponentProductMapping {
   product_id: string;
   product_name: string;
   business_unit?: string;
+  ado_product?: string;
   description?: string;
 }
 
@@ -78,11 +102,11 @@ export const DEFAULT_HIERARCHY_MAPPING: HierarchyMappingConfig = {
   ],
   area_path_mappings: [
     {
-      business_unit: 'Healthcare',
-      product_code: 'Platform',
-      team: 'Skunkworks',
-      area_path: 'Healthcare\\Teams\\Skunkworks',
-      description: 'Map Healthcare Platform Skunkworks team items'
+      mapping_type: 'epic',
+      pb_initiative_name: 'Healthcare',
+      ado_business_unit: 'Healthcare',
+      area_path: 'Healthcare\\BU\\Healthcare',
+      description: 'Map Healthcare initiatives to Healthcare business unit'
     }
   ],
   initiative_epic_mappings: [],
@@ -156,15 +180,32 @@ export function getAreaPathForItem(
   // In the future, we could add logic to select the appropriate mapping
   const mapping = mappings[0];
   
-  // Find the matching area path mapping
-  const areaPathMapping = mapping.area_path_mappings.find(m => 
+  // Find the matching area path mapping - try new fields first
+  const areaPathMapping = mapping.area_path_mappings.find(m => {
+    if (m.mapping_type === 'epic') {
+      return m.ado_business_unit === businessUnit;
+    } else if (m.mapping_type === 'feature') {
+      return m.ado_product === productCode;
+    } else if (m.mapping_type === 'story') {
+      return m.ado_team === team;
+    }
+    return false;
+  });
+  
+  // If found with new fields, return the area path
+  if (areaPathMapping) {
+    return areaPathMapping.area_path;
+  }
+  
+  // Legacy support - try the old fields
+  const legacyMapping = mapping.area_path_mappings.find(m => 
     m.business_unit === businessUnit && 
     m.product_code === productCode && 
     m.team === team
   );
   
   // If no exact match, try to find a partial match
-  if (!areaPathMapping) {
+  if (!legacyMapping) {
     // Try matching just business unit and product code
     const partialMapping = mapping.area_path_mappings.find(m => 
       m.business_unit === businessUnit && 
@@ -188,7 +229,7 @@ export function getAreaPathForItem(
     return mapping.area_path_mappings[0]?.area_path || 'Unknown';
   }
   
-  return areaPathMapping.area_path;
+  return legacyMapping.area_path;
 }
 
 /**

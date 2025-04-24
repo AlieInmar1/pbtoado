@@ -1,0 +1,7 @@
+{
+  "imports": {
+    "http/server": "https://deno.land/std@0.177.0/http/server.ts",
+    "supabase": "https://esm.sh/@supabase/supabase-js@2.21.0",
+    "cors": "../_shared/cors.ts"
+  }
+}

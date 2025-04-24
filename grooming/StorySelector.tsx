@@ -6,7 +6,18 @@ import {
   DocumentTextIcon,
   ExclamationCircleIcon
 } from '@heroicons/react/24/outline';
-import type { Story, GroomingSessionStory } from '../../types/database';
+import type { SessionStory as GroomingSessionStory } from '../src/types/grooming';
+
+// Define a custom Story interface that includes the properties used in this component
+interface Story {
+  id: string;
+  title: string;
+  description?: string;
+  status?: string;
+  level?: string | { name: string };
+  pb_title?: string | { name: string };
+  story_points?: number;
+}
 
 interface StorySelectorProps {
   workspaceId: string;
@@ -103,6 +114,22 @@ export function StorySelector({
     };
   }, [workspaceId, existingStoryIds, getStoriesForWorkspace]);
 
+  // Track expanded story cards
+  const [expandedStories, setExpandedStories] = useState<Set<string>>(new Set());
+  
+  // Toggle expanded state for a story
+  const toggleStoryExpanded = useCallback((storyId: string) => {
+    setExpandedStories(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(storyId)) {
+        newSet.delete(storyId);
+      } else {
+        newSet.add(storyId);
+      }
+      return newSet;
+    });
+  }, []);
+  
   // Filter stories based on search query and filter - memoize to prevent unnecessary recalculations
   const filteredStories = useMemo(() => {
     let result = [...stories];
@@ -250,56 +277,67 @@ export function StorySelector({
             </div>
           ) : (
             <ul className="divide-y divide-gray-200">
-              {filteredStories.map((story) => (
-                <li key={story.id} className="py-4">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mr-2 ${getLevelBadgeClass(story)}`}>
-                          {getStringValue(story.level, 'story')}
-                        </span>
-                        <p className="text-sm font-medium text-gray-900 truncate">
-                          {getStringValue(story.pb_title, '[No Title]')}
-                        </p>
-                      </div>
-                      {story.description && (
-                        <p className="mt-1 text-sm text-gray-500 line-clamp-2">
-                          {getStringValue(story.description, '')}
-                        </p>
-                      )}
-                      <div className="mt-1 flex items-center text-xs text-gray-500 space-x-2">
-                        {story.story_points && <span>Points: {story.story_points}</span>}
-                        {story.status && (
-                          <>
-                            <span>•</span>
-                            <span>Status: {getStringValue(story.status, 'Unknown')}</span>
-                          </>
+              {filteredStories.map((story) => {
+                const isExpanded = expandedStories.has(story.id);
+                
+                return (
+                  <li key={story.id} className="py-3">
+                    <div className="flex items-start justify-between">
+                      <div 
+                        className="flex-1 min-w-0 cursor-pointer" 
+                        onClick={() => toggleStoryExpanded(story.id)}
+                      >
+                        <div className="flex items-center">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium mr-2 ${getLevelBadgeClass(story)}`}>
+                            {getStringValue(story.level, 'story')}
+                          </span>
+                          <p className="text-sm font-medium text-gray-900 truncate">
+                            {getStringValue(story.pb_title, '[No Title]')}
+                          </p>
+                        </div>
+                        
+                        {isExpanded && story.description && (
+                          <p className="mt-1 text-sm text-gray-500">
+                            {getStringValue(story.description, '')}
+                          </p>
+                        )}
+                        
+                        {isExpanded && (
+                          <div className="mt-1 flex items-center text-xs text-gray-500 space-x-2">
+                            {story.story_points && <span>Points: {story.story_points}</span>}
+                            {story.status && (
+                              <>
+                                <span>•</span>
+                                <span>Status: {getStringValue(story.status, 'Unknown')}</span>
+                              </>
+                            )}
+                          </div>
                         )}
                       </div>
+                      <button
+                        onClick={() => handleAddStory(story)}
+                        disabled={adding === story.id}
+                        className="ml-4 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                      >
+                        {adding === story.id ? (
+                          <span className="flex items-center">
+                            <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-indigo-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Adding...
+                          </span>
+                        ) : (
+                          <>
+                            <PlusIcon className="h-4 w-4 mr-1" />
+                            Add
+                          </>
+                        )}
+                      </button>
                     </div>
-                    <button
-                      onClick={() => handleAddStory(story)}
-                      disabled={adding === story.id}
-                      className="ml-4 inline-flex items-center px-2.5 py-1.5 border border-transparent text-xs font-medium rounded text-indigo-700 bg-indigo-100 hover:bg-indigo-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                    >
-                      {adding === story.id ? (
-                        <span className="flex items-center">
-                          <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-indigo-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                          Adding...
-                        </span>
-                      ) : (
-                        <>
-                          <PlusIcon className="h-4 w-4 mr-1" />
-                          Add to Session
-                        </>
-                      )}
-                    </button>
-                  </div>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

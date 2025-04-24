@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { XMarkIcon, SparklesIcon, ArrowPathIcon, ChevronRightIcon } from '@heroicons/react/24/outline';
-import { useWorkspace } from '../contexts/WorkspaceContext';
-import { supabase } from '../lib/supabase';
-import { toast } from 'sonner';
+import { useWorkspace } from '../src/contexts/WorkspaceContext';
+import { supabase } from './lib/supabase';
+import { toast } from './lib/sonner';
 
 export function GroomingAssistant() {
   const { currentWorkspace } = useWorkspace();
@@ -16,12 +16,18 @@ export function GroomingAssistant() {
     
     setAnalyzing(true);
     try {
+      // Use hardcoded values for now - these will be replaced by environment variables at runtime
+      // @ts-ignore - TypeScript doesn't recognize import.meta.env
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      // @ts-ignore - TypeScript doesn't recognize import.meta.env
+      const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      
       const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/analyze-story`,
+        `${supabaseUrl}/functions/v1/analyze-story`,
         {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'Authorization': `Bearer ${supabaseKey}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({

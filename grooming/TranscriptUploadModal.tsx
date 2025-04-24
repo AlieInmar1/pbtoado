@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { XMarkIcon, DocumentTextIcon, ArrowUpTrayIcon } from '@heroicons/react/24/outline';
-import { useDatabase } from '../../contexts/DatabaseContext';
-import { useFunctions } from '../../contexts/FunctionContext';
-import type { GroomingSession } from '../../types/database';
+import { useDatabase } from '../src/contexts/DatabaseContext';
+import { useFunctions } from '../src/contexts/FunctionContext';
+import type { GroomingSession } from '../src/types/grooming';
 
 interface TranscriptUploadModalProps {
   session: GroomingSession;

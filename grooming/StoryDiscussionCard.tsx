@@ -7,17 +7,55 @@ import {
   ClockIcon,
   ArrowPathIcon,
   DocumentDuplicateIcon,
-  ExclamationTriangleIcon
+  ExclamationTriangleIcon,
+  TrashIcon
 } from '@heroicons/react/24/outline';
-import type { GroomingSessionStory, Story } from '../../types/database';
+import { EditableItem } from './EditableItem';
+import { toast } from './lib/sonner';
+import type { GroomingStory, SessionStory } from '../src/types/grooming';
+
+// Define a custom type for the session story that matches what we need
+interface CustomSessionStory {
+  id: string;
+  session_id: string;
+  story_id: string;
+  status: 'pending' | 'discussed' | 'deferred' | 'split' | 'rejected';
+  discussion_order?: number;
+  discussion_points?: string[];
+  decisions?: string[];
+  questions?: string[];
+  technical_notes?: string;
+  risk_rating?: number;
+  complexity_rating?: number;
+  story: {
+    id: string;
+    pb_title: string;
+    description?: string;
+    acceptance_criteria?: string[];
+    level?: string;
+    status?: string;
+    story_points?: number;
+    complexity?: number;
+    business_value?: number;
+    parent_story_id?: string;
+    workspace_id: string;
+    created_at: string;
+    updated_at: string;
+    pb_feature_id?: string;
+    ado_work_item_id?: number;
+  };
+}
 
 interface StoryDiscussionCardProps {
-  sessionStory: GroomingSessionStory & { story: Story };
+  sessionStory: CustomSessionStory;
   onClose: () => void;
   onUpdateStatus: (status: 'pending' | 'discussed' | 'deferred' | 'split' | 'rejected') => Promise<void>;
   onAddDiscussionPoint: (point: string) => Promise<void>;
+  onUpdateDiscussionPoints?: (points: string[]) => Promise<void>;
   onAddDecision: (decision: string) => Promise<void>;
+  onUpdateDecisions?: (decisions: string[]) => Promise<void>;
   onAddQuestion: (question: string) => Promise<void>;
+  onUpdateQuestions?: (questions: string[]) => Promise<void>;
   onUpdateTechnicalNotes: (notes: string) => Promise<void>;
   onUpdateRiskRating: (rating: number) => Promise<void>;
   onUpdateComplexityRating: (rating: number) => Promise<void>;
@@ -30,8 +68,11 @@ export function StoryDiscussionCard({
   onClose,
   onUpdateStatus,
   onAddDiscussionPoint,
+  onUpdateDiscussionPoints,
   onAddDecision,
+  onUpdateDecisions,
   onAddQuestion,
+  onUpdateQuestions,
   onUpdateTechnicalNotes,
   onUpdateRiskRating,
   onUpdateComplexityRating,
@@ -262,9 +303,53 @@ export function StoryDiscussionCard({
                 
                 {sessionStory.discussion_points && sessionStory.discussion_points.length > 0 ? (
                   <ul className="mt-3 divide-y divide-gray-200">
-                    {sessionStory.discussion_points.map((point, index) => (
+                    {sessionStory.discussion_points.map((point: string, index: number) => (
                       <li key={index} className="py-2">
-                        <p className="text-sm text-gray-900">{point}</p>
+                        <EditableItem 
+                          value={point}
+                          onSave={async (newValue) => {
+                            setLoading(true);
+                            try {
+                              // Create a new array with the updated value
+                              const updatedPoints = [...sessionStory.discussion_points!];
+                              updatedPoints[index] = newValue;
+                              
+                              // Update the session story with the new array
+                              if (onUpdateDiscussionPoints) {
+                                await onUpdateDiscussionPoints(updatedPoints);
+                              } else {
+                                console.warn('onUpdateDiscussionPoints is not defined');
+                              }
+                              toast.success("Discussion point updated");
+                            } catch (error) {
+                              console.error('Error updating discussion point:', error);
+                              toast.error("Failed to update discussion point");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          onDelete={async () => {
+                            setLoading(true);
+                            try {
+                              // Create a new array without the deleted item
+                              const updatedPoints = sessionStory.discussion_points!.filter((_, i) => i !== index);
+                              
+                              // Update the session story with the new array
+                              if (onUpdateDiscussionPoints) {
+                                await onUpdateDiscussionPoints(updatedPoints);
+                              } else {
+                                console.warn('onUpdateDiscussionPoints is not defined');
+                              }
+                              toast.success("Discussion point deleted");
+                            } catch (error) {
+                              console.error('Error deleting discussion point:', error);
+                              toast.error("Failed to delete discussion point");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          isReadOnly={isReadOnly}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -297,9 +382,53 @@ export function StoryDiscussionCard({
                 
                 {sessionStory.decisions && sessionStory.decisions.length > 0 ? (
                   <ul className="mt-3 divide-y divide-gray-200">
-                    {sessionStory.decisions.map((decision, index) => (
+                    {sessionStory.decisions.map((decision: string, index: number) => (
                       <li key={index} className="py-2">
-                        <p className="text-sm text-gray-900">{decision}</p>
+                        <EditableItem 
+                          value={decision}
+                          onSave={async (newValue) => {
+                            setLoading(true);
+                            try {
+                              // Create a new array with the updated value
+                              const updatedDecisions = [...sessionStory.decisions!];
+                              updatedDecisions[index] = newValue;
+                              
+                              // Update the session story with the new array
+                              if (onUpdateDecisions) {
+                                await onUpdateDecisions(updatedDecisions);
+                              } else {
+                                console.warn('onUpdateDecisions is not defined');
+                              }
+                              toast.success("Decision updated");
+                            } catch (error) {
+                              console.error('Error updating decision:', error);
+                              toast.error("Failed to update decision");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          onDelete={async () => {
+                            setLoading(true);
+                            try {
+                              // Create a new array without the deleted item
+                              const updatedDecisions = sessionStory.decisions!.filter((_, i) => i !== index);
+                              
+                              // Update the session story with the new array
+                              if (onUpdateDecisions) {
+                                await onUpdateDecisions(updatedDecisions);
+                              } else {
+                                console.warn('onUpdateDecisions is not defined');
+                              }
+                              toast.success("Decision deleted");
+                            } catch (error) {
+                              console.error('Error deleting decision:', error);
+                              toast.error("Failed to delete decision");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          isReadOnly={isReadOnly}
+                        />
                       </li>
                     ))}
                   </ul>
@@ -332,9 +461,53 @@ export function StoryDiscussionCard({
                 
                 {sessionStory.questions && sessionStory.questions.length > 0 ? (
                   <ul className="mt-3 divide-y divide-gray-200">
-                    {sessionStory.questions.map((question, index) => (
+                    {sessionStory.questions.map((question: string, index: number) => (
                       <li key={index} className="py-2">
-                        <p className="text-sm text-gray-900">{question}</p>
+                        <EditableItem 
+                          value={question}
+                          onSave={async (newValue) => {
+                            setLoading(true);
+                            try {
+                              // Create a new array with the updated value
+                              const updatedQuestions = [...sessionStory.questions!];
+                              updatedQuestions[index] = newValue;
+                              
+                              // Update the session story with the new array
+                              if (onUpdateQuestions) {
+                                await onUpdateQuestions(updatedQuestions);
+                              } else {
+                                console.warn('onUpdateQuestions is not defined');
+                              }
+                              toast.success("Question updated");
+                            } catch (error) {
+                              console.error('Error updating question:', error);
+                              toast.error("Failed to update question");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          onDelete={async () => {
+                            setLoading(true);
+                            try {
+                              // Create a new array without the deleted item
+                              const updatedQuestions = sessionStory.questions!.filter((_, i) => i !== index);
+                              
+                              // Update the session story with the new array
+                              if (onUpdateQuestions) {
+                                await onUpdateQuestions(updatedQuestions);
+                              } else {
+                                console.warn('onUpdateQuestions is not defined');
+                              }
+                              toast.success("Question deleted");
+                            } catch (error) {
+                              console.error('Error deleting question:', error);
+                              toast.error("Failed to delete question");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          isReadOnly={isReadOnly}
+                        />
                       </li>
                     ))}
                   </ul>

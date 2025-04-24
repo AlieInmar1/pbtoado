@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Form Field Updater</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #2563eb;
+            border-bottom: 2px solid #e5e7eb;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #4b5563;
+            margin-top: 30px;
+        }
+        pre {
+            background-color: #f3f4f6;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        code {
+            font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+        }
+        .button {
+            background-color: #2563eb;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+        .button:hover {
+            background-color: #1d4ed8;
+        }
+        .note {
+            background-color: #fef3c7;
+            border-left: 4px solid #f59e0b;
+            padding: 10px 15px;
+            margin: 20px 0;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+            font-size: 14px;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Story Creator Form Field Updater</h1>
+    
+    <div class="note">
+        <strong>Note:</strong> This tool helps fix issues with form fields not updating properly in the Story Creator.
+    </div>
+    
+    <h2>Instructions</h2>
+    <ol>
+        <li>Open the Story Creator page in your browser</li>
+        <li>Open the browser's developer console (F12 or right-click > Inspect > Console)</li>
+        <li>Copy the script below</li>
+        <li>Paste it into the console and press Enter</li>
+        <li>Use the <code>updateStoryFields()</code> function as described below</li>
+    </ol>
+    
+    <h2>The Script</h2>
+    <textarea id="scriptContent" readonly></textarea>
+    <button class="button" onclick="copyScript()">Copy Script</button>
+    
+    <h2>How to Use</h2>
+    <p>After pasting the script in the console, you can use the following function to update form fields:</p>
+    
+    <pre><code>updateStoryFields(
+  "Your Story Title", 
+  "Your Story Description", 
+  ["Acceptance Criterion 1", "Acceptance Criterion 2"]
+);</code></pre>
+    
+    <p>For example:</p>
+    
+    <pre><code>updateStoryFields(
+  "Implement User Login", 
+  "As a user, I want to log in to the system so that I can access my account.", 
+  [
+    "Given I am on the login page, when I enter valid credentials, then I should be logged in successfully.",
+    "Given I am on the login page, when I enter invalid credentials, then I should see an error message."
+  ]
+);</code></pre>
+
+    <h2>Automatic Monitoring</h2>
+    <p>The script also automatically monitors for AI-generated content and will attempt to update the form fields when it detects a response from the AI service.</p>
+    
+    <script>
+        // Load the script content from the file
+        fetch('formFieldUpdater.js')
+            .then(response => response.text())
+            .then(text => {
+                document.getElementById('scriptContent').value = text;
+            })
+            .catch(error => {
+                document.getElementById('scriptContent').value = 
+                    '// Error loading script. Please check the file path.\n' + 
+                    '// You can manually copy the script from:\n' + 
+                    '// src/utils/formFieldUpdater.js';
+            });
+        
+        function copyScript() {
+            const scriptContent = document.getElementById('scriptContent');
+            scriptContent.select();
+            document.execCommand('copy');
+            alert('Script copied to clipboard!');
+        }
+    </script>
+</body>
+</html>

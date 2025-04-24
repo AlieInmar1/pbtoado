@@ -3,12 +3,12 @@ import { XMarkIcon } from '@heroicons/react/24/outline';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { useWorkspace } from '../../contexts/WorkspaceContext';
-import { useDatabase } from '../../contexts/DatabaseContext';
-import { toast } from 'sonner';
-import { Input } from '../ui/Input';
-import { Select } from '../ui/Select';
-import { supabase } from '../../lib/supabase';
+import { useWorkspace } from '../src/contexts/WorkspaceContext';
+import { toast } from './lib/sonner';
+import { useCreateSession } from '../src/hooks/useGroomingSessions';
+import { Input } from './ui/Input';
+import { Select } from './ui/Select';
+import { supabase } from './lib/supabase';
 
 const sessionSchema = z.object({
   name: z.string().min(1, 'Name is required'),
@@ -26,7 +26,7 @@ interface GroomingSessionModalProps {
 
 export function GroomingSessionModal({ onClose, onCreated }: GroomingSessionModalProps) {
   const { currentWorkspace } = useWorkspace();
-  const { db } = useDatabase();
+  const createSessionMutation = useCreateSession();
   const [loading, setLoading] = useState(false);
 
   const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<SessionFormData>({
@@ -39,14 +39,13 @@ export function GroomingSessionModal({ onClose, onCreated }: GroomingSessionModa
   });
 
   const onSubmit = async (data: SessionFormData) => {
-    if (!currentWorkspace || !db) return;
+    if (!currentWorkspace) return;
 
     setLoading(true);
     try {
-      await db.groomingSessions.create({
+      await createSessionMutation.mutateAsync({
         ...data,
         workspace_id: currentWorkspace.id,
-        status: 'planned',
         // No facilitator_id is provided, which is now allowed since we made it nullable
       });
 

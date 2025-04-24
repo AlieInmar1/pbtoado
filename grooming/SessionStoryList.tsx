@@ -9,15 +9,15 @@ import {
   ArrowsUpDownIcon,
   DocumentDuplicateIcon
 } from '@heroicons/react/24/outline';
-import type { GroomingSessionStory, Story } from '../../types/database';
+import type { SessionStory, GroomingStory } from '../src/types/grooming';
 
 interface SessionStoryListProps {
-  sessionStories: (GroomingSessionStory & { story: Story })[];
+  sessionStories: (SessionStory & { story: GroomingStory })[];
   onAddStoryClick: () => void;
   onRemoveStory: (sessionStoryId: string) => Promise<void>;
   onReorderStory: (sessionStoryId: string, newOrder: number) => Promise<void>;
-  onStoryClick: (sessionStory: GroomingSessionStory & { story: Story }) => void;
-  onSplitStory: (sessionStory: GroomingSessionStory & { story: Story }) => void;
+  onStoryClick: (sessionStory: SessionStory & { story: GroomingStory }) => void;
+  onSplitStory: (sessionStory: SessionStory & { story: GroomingStory }) => void;
   sessionStatus: 'planned' | 'in_progress' | 'completed';
 }
 
@@ -33,12 +33,10 @@ export function SessionStoryList({
   const [loading, setLoading] = useState(false);
   const [actionStoryId, setActionStoryId] = useState<string | null>(null);
 
-  // Sort stories by discussion_order
+  // Sort stories by discussion_duration_minutes or created_at as fallback
   const sortedStories = [...sessionStories].sort((a, b) => {
-    // If discussion_order is undefined or null, put at the end
-    if (a.discussion_order === undefined || a.discussion_order === null) return 1;
-    if (b.discussion_order === undefined || b.discussion_order === null) return -1;
-    return a.discussion_order - b.discussion_order;
+    // If no specific order, sort by created_at
+    return (a.created_at > b.created_at) ? 1 : -1;
   });
 
   const handleRemoveStory = async (id: string) => {
@@ -65,11 +63,10 @@ export function SessionStoryList({
     const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
     if (newIndex < 0 || newIndex >= sortedStories.length) return;
     
-    // Get the current order values
-    const currentOrder = sortedStories[currentIndex].discussion_order ?? currentIndex;
-    const targetOrder = sortedStories[newIndex].discussion_order ?? newIndex;
+    // Use index as order
+    const targetOrder = newIndex;
     
-    // Swap the orders
+    // Update the order
     setLoading(true);
     setActionStoryId(id);
     try {
@@ -138,11 +135,9 @@ export function SessionStoryList({
                   >
                     <ChevronUpIcon className="h-4 w-4" />
                   </button>
-                  <span className="text-xs text-gray-500">
-                    {sessionStory.discussion_order !== undefined && sessionStory.discussion_order !== null 
-                      ? sessionStory.discussion_order + 1 
-                      : index + 1}
-                  </span>
+                    <span className="text-xs text-gray-500">
+                      {index + 1}
+                    </span>
                   <button
                     onClick={() => handleMoveStory(sessionStory.id, 'down')}
                     disabled={index === sortedStories.length - 1 || loading || sessionStatus === 'completed'}
@@ -158,14 +153,10 @@ export function SessionStoryList({
                 >
                   <div className="flex items-center justify-between">
                     <div className="flex items-center">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mr-2 ${
-                        sessionStory.story.level === 'epic' ? 'bg-purple-100 text-purple-800' :
-                        sessionStory.story.level === 'feature' ? 'bg-blue-100 text-blue-800' :
-                        'bg-green-100 text-green-800'
-                      }`}>
-                        {sessionStory.story.level || 'story'}
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium mr-2 bg-blue-100 text-blue-800">
+                        {sessionStory.story.pb_feature_id ? 'feature' : 'story'}
                       </span>
-                      <p className="text-sm font-medium text-gray-900">{sessionStory.story.pb_title}</p>
+                      <p className="text-sm font-medium text-gray-900">{sessionStory.story.title}</p>
                     </div>
                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getStatusColor(sessionStory.status)}`}>
                       {sessionStory.status}
@@ -184,10 +175,10 @@ export function SessionStoryList({
                       </span>
                     )}
                     
-                    {sessionStory.discussion_points && sessionStory.discussion_points.length > 0 && (
+                    {sessionStory.discussion_notes && (
                       <span className="flex items-center">
                         <ChatBubbleLeftRightIcon className="h-3.5 w-3.5 mr-1" />
-                        {sessionStory.discussion_points.length} discussion points
+                        Has discussion notes
                       </span>
                     )}
                     

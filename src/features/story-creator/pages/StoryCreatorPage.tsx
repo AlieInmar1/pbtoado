@@ -1,181 +1,150 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
-import StoryCreatorWizard from '../components/StoryCreatorWizard';
-import { useWorkspace } from '../../../contexts/WorkspaceContext';
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { supabase } from '../../../lib/supabase';
+import { Story } from '../../../types/story-creator';
+import { StoryCreatorWizard } from '../components/StoryCreatorWizard';
+import { AIRecommendationPanel } from '../components/AIRecommendationPanel';
 
-const StoryCreatorPage: React.FC = () => {
-  const { currentWorkspace } = useWorkspace();
-  const [showWizard, setShowWizard] = useState(false);
-  const [parentId, setParentId] = useState<string | undefined>(undefined);
+/**
+ * StoryCreatorPage hosts the StoryCreatorWizard and handles loading 
+ * existing stories for editing or creating new stories.
+ */
+export const StoryCreatorPage: React.FC = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  const handleComplete = (storyId: string) => {
-    // Optionally navigate to the created story or reset the wizard
-    console.log(`Story created with ID: ${storyId}`);
-    // Reset after a delay to show the success message
-    setTimeout(() => {
-      setShowWizard(false);
-      setParentId(undefined);
-    }, 3000);
+  console.log("StoryCreatorPage initializing, location state:", location.state);
+  console.log("Location object:", location);
+  
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Initialize story from location state or empty object
+  const initialStory = location.state?.initialStory || {};
+  console.log("Initial story from location:", initialStory);
+  
+  const [story, setStory] = useState<Partial<Story>>(initialStory);
+  const [showAIPanel, setShowAIPanel] = useState<boolean>(!!location.state?.fromIdeaGenerator);
+  
+  // Debug logs
+  useEffect(() => {
+    console.log("Story state initialized:", story);
+    console.log("AI Panel visibility:", showAIPanel);
+  }, [story, showAIPanel]);
+  
+  // Load existing story if editing
+  useEffect(() => {
+    if (id) {
+      setLoading(true);
+      supabase
+        .from('stories')
+        .select('*')
+        .eq('id', id)
+        .single()
+        .then(({ data, error }) => {
+          setLoading(false);
+          if (error) {
+            console.error('Error loading story:', error);
+            setError('Failed to load story. Please try again.');
+          } else if (data) {
+            setStory(data);
+          }
+        });
+    }
+  }, [id]);
+  
+  // Toggle AI recommendation panel
+  const toggleAIPanel = () => {
+    setShowAIPanel(prev => !prev);
   };
-
-  const handleCancel = () => {
-    setShowWizard(false);
-    setParentId(undefined);
-  };
-
-  if (!currentWorkspace) {
+  
+  if (loading) {
     return (
-      <div className="flex items-center justify-center h-full">
+      <div className="flex justify-center items-center h-64">
         <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-700">No workspace selected</h2>
-          <p className="mt-2 text-gray-500">Please select a workspace to continue</p>
+          <div className="spinner h-10 w-10 border-4 border-blue-500 border-r-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading story...</p>
         </div>
       </div>
     );
   }
-
-  return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">AI Story Creator</h1>
-          <p className="text-gray-600">
-            Create stories with AI assistance for better quality and consistency
-          </p>
-        </div>
-        <div className="flex space-x-4">
-          <Link
-            to="/story-creator/templates"
-            className="inline-flex items-center px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Manage Templates
-          </Link>
-          <button
-            type="button"
-            onClick={() => setShowWizard(true)}
-            className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            Create New Story
-          </button>
-        </div>
-      </div>
-
-      {showWizard ? (
-        <StoryCreatorWizard
-          parentId={parentId}
-          onComplete={handleComplete}
-          onCancel={handleCancel}
-        />
-      ) : (
-        <div className="bg-white shadow rounded-lg p-6">
-          <div className="text-center py-12">
-            <svg
-              className="mx-auto h-12 w-12 text-gray-400"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6v6m0 0v6m0-6h6m-6 0H6"
-              />
+  
+  if (error) {
+    return (
+      <div className="max-w-4xl mx-auto mt-8 bg-red-50 p-4 rounded-lg border border-red-200">
+        <div className="flex">
+          <div className="flex-shrink-0">
+            <svg className="h-5 w-5 text-red-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
             </svg>
-            <h2 className="mt-2 text-lg font-medium text-gray-900">Create a new story</h2>
-            <p className="mt-1 text-sm text-gray-500">
-              Get started by creating a new story with AI assistance
-            </p>
-            <div className="mt-6">
+          </div>
+          <div className="ml-3">
+            <h3 className="text-sm font-medium text-red-800">Error</h3>
+            <div className="mt-2 text-sm text-red-700">
+              <p>{error}</p>
+            </div>
+            <div className="mt-4">
               <button
                 type="button"
-                onClick={() => setShowWizard(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                onClick={() => navigate('/stories')}
+                className="inline-flex items-center px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md shadow-sm text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
               >
-                Create Story
+                Go back to Stories
               </button>
             </div>
           </div>
-
-          <div className="mt-8 border-t border-gray-200 pt-8">
-            <h3 className="text-lg font-medium text-gray-900">AI-Powered Story Creation</h3>
-            <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-100 text-indigo-600 mb-4">
-                  <svg
-                    className="h-6 w-6"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-                    />
-                  </svg>
-                </div>
-                <h4 className="text-base font-medium text-gray-900">Intelligent Suggestions</h4>
-                <p className="mt-2 text-sm text-gray-500">
-                  Get AI-powered suggestions for titles, descriptions, and acceptance criteria based on
-                  your input.
-                </p>
-              </div>
-
-              <div className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-100 text-indigo-600 mb-4">
-                  <svg
-                    className="h-6 w-6"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
-                    />
-                  </svg>
-                </div>
-                <h4 className="text-base font-medium text-gray-900">Templates</h4>
-                <p className="mt-2 text-sm text-gray-500">
-                  Use predefined templates for different types of stories to ensure consistency and
-                  completeness.
-                </p>
-              </div>
-
-              <div className="border border-gray-200 rounded-lg p-4">
-                <div className="flex items-center justify-center h-12 w-12 rounded-md bg-indigo-100 text-indigo-600 mb-4">
-                  <svg
-                    className="h-6 w-6"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  </svg>
-                </div>
-                <h4 className="text-base font-medium text-gray-900">Risk Assessment</h4>
-                <p className="mt-2 text-sm text-gray-500">
-                  Automatically identify potential risks and get suggestions for mitigation strategies.
-                </p>
-              </div>
-            </div>
-          </div>
         </div>
-      )}
+      </div>
+    );
+  }
+  
+  return (
+    <div className="relative">
+      {/* Main content area */}
+      <div className="px-4 py-8 sm:px-0">
+        <div className="mb-6 flex justify-between items-center">
+          <h1 className="text-2xl font-bold text-gray-900">
+            {id ? 'Edit Story' : 'Create New Story'}
+          </h1>
+          <button
+            type="button"
+            onClick={toggleAIPanel}
+            className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          >
+            <svg className="-ml-1 mr-2 h-5 w-5 text-indigo-500" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+              <path d="M10 12a2 2 0 100-4 2 2 0 000 4z" />
+              <path fillRule="evenodd" d="M.458 10C1.732 5.943 5.522 3 10 3s8.268 2.943 9.542 7c-1.274 4.057-5.064 7-9.542 7S1.732 14.057.458 10zM14 10a4 4 0 11-8 0 4 4 0 018 0z" clipRule="evenodd" />
+            </svg>
+            {showAIPanel ? 'Hide AI Assistant' : 'Show AI Assistant'}
+          </button>
+        </div>
+        
+        <div className="flex flex-col lg:flex-row gap-6">
+          {/* Main wizard */}
+          <div className={`${showAIPanel ? 'lg:w-2/3' : 'w-full'}`}>
+            <StoryCreatorWizard 
+              initialStory={story} 
+              isEdit={!!id} 
+            />
+          </div>
+          
+          {/* AI panel - shown conditionally */}
+          {showAIPanel && (
+            <div className="lg:w-1/3">
+              <AIRecommendationPanel 
+                story={story}
+                onSuggestionApply={(field, value) => {
+                  setStory(prev => ({
+                    ...prev,
+                    [field]: value
+                  }));
+                }}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 };
-
-export default StoryCreatorPage;

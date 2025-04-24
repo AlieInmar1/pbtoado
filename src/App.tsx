@@ -16,12 +16,14 @@ import { syncRoutes } from './features/sync/routes';
 import { adminRoutes } from './features/admin/routes'; // Import admin routes
 import { authRoutes } from './features/auth/routes';
 import { storyCreatorRoutes } from './features/story-creator/routes'; // Import story creator routes
+import { pbAdoLinkerRoutes } from './features/pb-ado-linker/routes'; // Import PB-ADO Linker routes
 
 // Import context providers
 import { AuthProvider } from './features/auth/AuthContext';
 import { WorkspaceProvider } from './contexts/WorkspaceContext';
 import { DatabaseProvider } from './contexts/DatabaseContext';
 import { FunctionProvider } from './contexts/FunctionContext';
+import { ToastProvider } from './contexts/ToastContext';
 
 // Import components
 import { PageNotFound } from './components/feedback/PageNotFound';
@@ -42,7 +44,8 @@ function App() {
     ...syncRoutes,
     ...adminRoutes, // Add admin routes
     ...authRoutes,
-    ...storyCreatorRoutes // Add story creator routes
+    ...storyCreatorRoutes, // Add story creator routes
+    ...pbAdoLinkerRoutes // Add PB-ADO Linker routes
   ];
 
   return (
@@ -50,7 +53,8 @@ function App() {
       <WorkspaceProvider>
         <DatabaseProvider>
           <FunctionProvider>
-            <BrowserRouter>
+            <ToastProvider>
+              <BrowserRouter>
         <Routes>
           {/* Redirect root to admin */}
           <Route path="/" element={<Navigate to="/admin" replace />} />
@@ -65,7 +69,8 @@ function App() {
           {/* 404 fallback */}
           <Route path="*" element={<PageNotFound />} />
             </Routes>
-            </BrowserRouter>
+              </BrowserRouter>
+            </ToastProvider>
           </FunctionProvider>
         </DatabaseProvider>
       </WorkspaceProvider>

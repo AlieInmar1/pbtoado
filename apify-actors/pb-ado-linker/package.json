@@ -1,0 +1,15 @@
+{
+    "name": "pb-ado-linker",
+    "version": "1.0.0",
+    "description": "Productboard to Azure DevOps UI linker",
+    "dependencies": {
+        "apify": "^3.1.8",
+        "playwright": "^1.45.3"
+    },
+    "scripts": {
+        "start": "node main.js"
+    },
+    "type": "module",
+    "author": "",
+    "license": "ISC"
+}

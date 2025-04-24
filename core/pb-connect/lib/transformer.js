@@ -95,10 +95,45 @@ function batchTransform(items, transformFn, workspaceId) {
   return items.map(item => transformFn(item, workspaceId));
 }
 
+/**
+ * Transform a ProductBoard product for database insertion
+ * @param {Object} product - Raw product from API
+ * @param {string} workspaceId - Workspace ID
+ * @returns {Object} - Transformed product data
+ */
+function transformProductForDb(product, workspaceId) {
+  return {
+    productboard_id: product.id,
+    name: product.name || 'Unnamed Product',
+    description: product.description || null,
+    workspace_id: workspaceId || null,
+    metadata: JSON.stringify(product)
+  };
+}
+
+/**
+ * Transform a ProductBoard user for database insertion
+ * @param {Object} user - Raw user data
+ * @param {string} workspaceId - Workspace ID
+ * @returns {Object} - Transformed user data
+ */
+function transformUserForDb(user, workspaceId) {
+  return {
+    productboard_id: user.id || null,
+    email: user.email,
+    name: user.name || user.email.split('@')[0],
+    role: user.role || 'User',
+    workspace_id: workspaceId || null,
+    metadata: JSON.stringify(user)
+  };
+}
+
 module.exports = {
   transformFeatureForDb,
   transformInitiativeForDb,
   transformObjectiveForDb,
   transformComponentForDb,
+  transformProductForDb,
+  transformUserForDb,
   batchTransform
 };
