@@ -3,6 +3,6 @@ services:
     name: proxy-server-service
     env: node
     plan: free
+    rootDir: proxy-server
     buildCommand: npm install
-    startCommand: node server.js
-    rootDir: src/proxy-server
+    startCommand: npm start
